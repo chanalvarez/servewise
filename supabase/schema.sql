@@ -34,6 +34,7 @@ CREATE TABLE stores (
   current_serving   INT         NOT NULL DEFAULT 0,
   last_queue_number INT         NOT NULL DEFAULT 0,
   is_open           BOOLEAN     NOT NULL DEFAULT true,
+  is_cutoff         BOOLEAN     NOT NULL DEFAULT false,  -- staff blocks new queue entries near closing
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -107,6 +108,11 @@ BEGIN
   -- Check store is open
   IF NOT EXISTS (SELECT 1 FROM stores WHERE id = p_store_id AND is_open = true) THEN
     RAISE EXCEPTION 'Store is currently closed';
+  END IF;
+
+  -- Check queue cutoff
+  IF EXISTS (SELECT 1 FROM stores WHERE id = p_store_id AND is_cutoff = true) THEN
+    RAISE EXCEPTION 'Queue is closed — this store has stopped accepting new customers';
   END IF;
 
   -- Atomically increment the queue counter

@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { StaffQueuePanel } from '@/components/staff/StaffQueuePanel'
 import { VibeToggle } from '@/components/staff/VibeToggle'
+import { CutoffButton } from '@/components/staff/CutoffButton'
 import { StaffSignOutButton } from './StaffSignOutButton'
 
 interface Props {
@@ -51,24 +52,25 @@ export default async function StaffDashboardPage({ params }: Props) {
   if (!store || !mall) notFound()
 
   return (
-    <main className="min-h-screen bg-gray-50 pb-16">
+    <main className="min-h-screen pb-16" style={{ background: 'radial-gradient(ellipse at 20% 20%, rgba(99,102,241,0.15) 0%, transparent 55%), #07091A', backgroundAttachment: 'fixed' }}>
       {/* Header */}
-      <div className="sticky top-0 z-10 border-b border-gray-100 bg-white">
+      <div className="glass-dark sticky top-0 z-10">
         <div className="mx-auto max-w-2xl px-4 py-4">
           <div className="flex items-center gap-3">
             <Link
               href={`/${mall.slug}/${store.id}`}
-              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-gray-200 transition-colors hover:border-gray-300"
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl transition-colors"
+              style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
-              <ArrowLeft className="h-4 w-4 text-gray-600" />
+              <ArrowLeft className="h-4 w-4 text-white/70" />
             </Link>
 
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <Store className="h-3.5 w-3.5 text-indigo-500" />
-                <p className="text-xs font-medium text-indigo-600">Staff Dashboard</p>
+                <Store className="h-3 w-3 text-indigo-400/70" />
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-indigo-400/70">Staff Dashboard</p>
               </div>
-              <p className="truncate font-bold leading-tight text-gray-900">{store.name}</p>
+              <p className="truncate font-bold leading-tight text-white">{store.name}</p>
             </div>
 
             <StaffSignOutButton mallSlug={mallSlug} />
@@ -79,28 +81,31 @@ export default async function StaffDashboardPage({ params }: Props) {
         <div className="mx-auto max-w-2xl overflow-x-auto px-4 pb-3">
           <VibeToggle storeId={store.id} currentStatus={store.vibe_status} />
         </div>
+
+        {/* Cutoff toggle */}
+        <CutoffButton storeId={store.id} initialIsCutoff={store.is_cutoff} />
       </div>
 
       {/* Stats bar */}
-      <div className="border-b border-gray-100 bg-white">
-        <div className="mx-auto grid max-w-2xl grid-cols-3 divide-x divide-gray-100 px-0">
+      <div style={{ background: 'rgba(255,255,255,0.04)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="mx-auto grid max-w-2xl grid-cols-3 divide-x divide-white/[0.06] px-0">
           <div className="px-4 py-4 text-center">
-            <p className="text-2xl font-black tabular-nums text-gray-900">
+            <p className="text-2xl font-black tabular-nums text-white">
               {store.current_serving === 0 ? '—' : store.current_serving}
             </p>
-            <p className="text-xs text-gray-400">Now serving</p>
+            <p className="text-xs text-white/40">Now serving</p>
           </div>
           <div className="px-4 py-4 text-center">
-            <p className="text-2xl font-black tabular-nums text-indigo-600">
+            <p className="text-2xl font-black tabular-nums text-gradient">
               {tickets?.filter((t) => t.status === 'waiting').length ?? 0}
             </p>
-            <p className="text-xs text-gray-400">Waiting</p>
+            <p className="text-xs text-white/40">Waiting</p>
           </div>
           <div className="px-4 py-4 text-center">
-            <p className="text-2xl font-black tabular-nums text-gray-900">
+            <p className="text-2xl font-black tabular-nums text-white">
               {store.last_queue_number}
             </p>
-            <p className="text-xs text-gray-400">Total today</p>
+            <p className="text-xs text-white/40">Total today</p>
           </div>
         </div>
       </div>

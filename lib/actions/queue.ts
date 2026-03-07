@@ -88,3 +88,15 @@ export async function toggleStoreOpen(storeId: string, isOpen: boolean) {
 
   if (error) throw new Error(error.message)
 }
+
+/** Staff: toggle the queue cutoff — prevents new customers from joining when closing soon */
+export async function toggleCutoff(storeId: string, isCutoff: boolean) {
+  const supabase = await createClient()
+
+  const { error } = await supabase
+    .from('stores')
+    .update({ is_cutoff: isCutoff })
+    .eq('id', storeId)
+
+  if (error) throw new Error(error.message)
+}

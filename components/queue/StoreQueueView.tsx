@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Loader2, MapPin, LogIn } from 'lucide-react'
+import { ArrowLeft, Loader2, MapPin, LogIn, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { joinQueue } from '@/lib/actions/queue'
 import { useActiveTickets } from '@/context/ActiveTicketsContext'
@@ -126,23 +126,24 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 pb-32">
+    <main className="min-h-screen pb-32" style={{ background: 'radial-gradient(ellipse at 20% 20%, rgba(99,102,241,0.15) 0%, transparent 55%), #07091A', backgroundAttachment: 'fixed' }}>
       {/* Sticky header */}
-      <div className="sticky top-0 z-10 border-b border-gray-100 bg-white">
+      <div className="glass-dark sticky top-0 z-10">
         <div className="mx-auto max-w-2xl px-4 py-4">
           <div className="flex items-center gap-3">
             <Link
               href={`/${mall.slug}`}
-              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-gray-200 transition-colors hover:border-gray-300 hover:bg-gray-50"
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl transition-colors"
+              style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
-              <ArrowLeft className="h-4 w-4 text-gray-600" />
+              <ArrowLeft className="h-4 w-4 text-white/70" />
             </Link>
 
             <div className="min-w-0 flex-1">
-              <p className="truncate font-bold leading-tight text-gray-900">{store.name}</p>
+              <p className="truncate font-bold leading-tight text-white">{store.name}</p>
               <div className="flex items-center gap-1.5 mt-0.5">
-                <MapPin className="h-3 w-3 flex-shrink-0 text-gray-400" />
-                <p className="truncate text-xs text-gray-400">
+                <MapPin className="h-3 w-3 flex-shrink-0 text-white/30" />
+                <p className="truncate text-xs text-white/40">
                   {mall.name}
                   {(store.floor || store.unit_number) &&
                     ` · ${[store.floor, store.unit_number].filter(Boolean).join(' ')}`}
@@ -165,7 +166,10 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
 
         {/* No-show countdown (full-width) */}
         {myTicket?.status === 'no_show' && myTicket.no_show_triggered_at && (
-          <div className="flex justify-center rounded-3xl border border-red-100 bg-red-50 py-8">
+          <div
+            className="flex justify-center rounded-3xl py-8"
+            style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)' }}
+          >
             <NoShowCountdown triggeredAt={myTicket.no_show_triggered_at} />
           </div>
         )}
@@ -173,61 +177,94 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
         {/* Status / action area */}
         {myTicket ? (
           <div
-            className={`rounded-2xl border p-5 text-center ${
+            className="rounded-2xl p-5 text-center"
+            style={
               myTicket.status === 'called'
-                ? 'border-emerald-200 bg-emerald-50'
+                ? { background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }
                 : myTicket.status === 'no_show'
-                ? 'border-red-100 bg-red-50'
-                : 'border-indigo-100 bg-indigo-50'
-            }`}
+                ? { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)' }
+                : { background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }
+            }
           >
             <p
               className={`text-sm font-semibold ${
                 myTicket.status === 'called'
-                  ? 'text-emerald-700'
+                  ? 'text-emerald-400'
                   : myTicket.status === 'no_show'
-                  ? 'text-red-700'
-                  : 'text-indigo-700'
+                  ? 'text-red-400'
+                  : 'text-indigo-300'
               }`}
             >
               You hold ticket{' '}
-              <span className="text-lg font-black tabular-nums">#{myTicket.queue_number}</span>
+              <span className="text-lg font-black tabular-nums text-white">#{myTicket.queue_number}</span>
             </p>
             {ticketStatusMessage() && (
               <p
                 className={`mt-1 text-sm ${
                   myTicket.status === 'called'
-                    ? 'text-emerald-600'
+                    ? 'text-emerald-400/80'
                     : myTicket.status === 'no_show'
-                    ? 'text-red-600'
-                    : 'text-indigo-500'
+                    ? 'text-red-400/80'
+                    : 'text-indigo-300/80'
                 }`}
               >
                 {ticketStatusMessage()}
               </p>
             )}
-            <p className="mt-3 text-xs text-gray-400">
+            <p className="mt-3 text-xs text-white/30">
               Open the ticket drawer below to manage all your queues
             </p>
           </div>
         ) : (
           <>
             {!store.is_open ? (
-              <div className="rounded-2xl border border-gray-100 bg-white p-6 text-center">
-                <p className="font-semibold text-gray-500">This store is currently closed</p>
-                <p className="mt-1 text-sm text-gray-400">Check back when it reopens</p>
+              <div
+                className="rounded-2xl p-6 text-center"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+              >
+                <p className="font-semibold text-white/60">This store is currently closed</p>
+                <p className="mt-1 text-sm text-white/30">Check back when it reopens</p>
+              </div>
+            ) : store.is_cutoff ? (
+              <div
+                className="rounded-2xl p-6 text-center"
+                style={{
+                  background: 'rgba(251,146,60,0.08)',
+                  border: '1px solid rgba(251,146,60,0.25)',
+                  boxShadow: '0 0 24px rgba(251,146,60,0.06)',
+                }}
+              >
+                <div className="mb-3 flex justify-center">
+                  <div
+                    className="flex h-12 w-12 items-center justify-center rounded-2xl"
+                    style={{ background: 'rgba(251,146,60,0.15)', border: '1px solid rgba(251,146,60,0.3)' }}
+                  >
+                    <Clock className="h-6 w-6 text-amber-400" />
+                  </div>
+                </div>
+                <p className="font-semibold text-amber-300">Queue is now closed</p>
+                <p className="mt-1 text-sm text-amber-400/60">
+                  This store is closing soon and is no longer accepting new customers
+                </p>
               </div>
             ) : (
               <>
                 {error && (
-                  <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+                  <div
+                    className="rounded-xl px-4 py-3 text-sm text-red-400"
+                    style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}
+                  >
                     {error}
                   </div>
                 )}
                 <button
                   onClick={handleJoin}
                   disabled={joining}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 py-4 text-lg font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-lg font-semibold text-white transition-all hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{
+                    background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
+                    boxShadow: '0 0 24px rgba(99,102,241,0.4)',
+                  }}
                 >
                   {joining ? (
                     <>
@@ -241,7 +278,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
                     </>
                   )}
                 </button>
-                <p className="text-center text-xs text-gray-400">
+                <p className="text-center text-xs text-white/30">
                   No account needed — you&apos;ll get a ticket number instantly
                 </p>
               </>

@@ -32,6 +32,7 @@ export interface Store {
   current_serving: number
   last_queue_number: number
   is_open: boolean
+  is_cutoff: boolean
   created_at: string
 }
 
