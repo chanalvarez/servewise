@@ -6,6 +6,20 @@ ServeWise is a real-time virtual queue management system for shopping malls. Cus
 
 ---
 
+## Try It Now
+
+Scan the QR code below with your phone to access ServeWise:
+
+<p align="center">
+  <img src="public/qr-servewise.png" alt="ServeWise QR Code" width="220" />
+</p>
+
+<p align="center">
+  Or visit: <a href="https://servewise.vercel.app">https://servewise.vercel.app</a>
+</p>
+
+---
+
 ## Features
 
 ### For Customers
