@@ -175,6 +175,22 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
         )}
 
         {/* Status / action area */}
+        {myTicket && store.is_cutoff && (
+          <div
+            className="rounded-2xl px-4 py-3 flex items-center gap-3"
+            style={{
+              background: 'rgba(251,146,60,0.08)',
+              border: '1px solid rgba(251,146,60,0.25)',
+            }}
+          >
+            <Clock className="h-4 w-4 flex-shrink-0 text-amber-400" />
+            <div>
+              <p className="text-sm font-semibold text-amber-300">Queue is now closed</p>
+              <p className="text-xs text-amber-400/60">This store is no longer accepting new customers</p>
+            </div>
+          </div>
+        )}
+
         {myTicket ? (
           <div
             className="rounded-2xl p-5 text-center"
