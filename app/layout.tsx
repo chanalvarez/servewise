@@ -14,15 +14,19 @@ export const metadata: Metadata = {
   title: 'ServeWise — Skip the Line',
   description:
     'Join virtual queues across multiple stores without creating an account. Real-time updates, instant tickets.',
+  icons: {
+    icon: '/icon.png',
+    apple: '/apple-icon.png',
+  },
   appleWebApp: {
     capable: true,
-    statusBarStyle: 'default',
+    statusBarStyle: 'black-translucent',
     title: 'ServeWise',
   },
 }
 
 export const viewport: Viewport = {
-  themeColor: '#4f46e5',
+  themeColor: '#07091A',
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,
