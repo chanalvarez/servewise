@@ -49,7 +49,7 @@ export default async function HomePage() {
             virtually.
           </h1>
           <p className="mt-5 max-w-xs text-sm leading-relaxed text-white/50">
-            Get a queue ticket for any store in Cebu — no account, no app install.
+            Get a queue ticket for any store in Cebu. No account, no app install.
           </p>
 
           {/* Steps */}

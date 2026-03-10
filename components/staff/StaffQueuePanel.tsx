@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { callNext, markNoShow, markArrived } from '@/lib/actions/queue'
 import { NoShowCountdown } from '@/components/queue/NoShowCountdown'
 import { SkipForward, AlertTriangle, CheckCircle, Users } from 'lucide-react'
-import type { Ticket } from '@/types'
+import type { Store, Ticket } from '@/types'
 
 const STATUS_LABEL: Record<string, string> = {
   waiting: 'Waiting',
@@ -20,10 +20,12 @@ const STATUS_LABEL: Record<string, string> = {
 interface StaffQueuePanelProps {
   storeId: string
   initialTickets: Ticket[]
+  initialStore: Pick<Store, 'current_serving' | 'last_queue_number'>
 }
 
-export function StaffQueuePanel({ storeId, initialTickets }: StaffQueuePanelProps) {
+export function StaffQueuePanel({ storeId, initialTickets, initialStore }: StaffQueuePanelProps) {
   const [tickets, setTickets] = useState<Ticket[]>(initialTickets)
+  const [storeStats, setStoreStats] = useState(initialStore)
   const [loading, setLoading] = useState<string | null>(null)
   const router = useRouter()
   const params = useParams<{ mallSlug: string; storeId: string }>()
@@ -70,9 +72,26 @@ export function StaffQueuePanel({ storeId, initialTickets }: StaffQueuePanelProp
       )
       .subscribe()
 
-    return () => {
-      supabase.removeChannel(channel)
-    }
+    return () => { supabase.removeChannel(channel) }
+  }, [storeId])
+
+  // Realtime: keep store stats (current_serving, last_queue_number) live
+  useEffect(() => {
+    const supabase = createClient()
+
+    const channel = supabase
+      .channel(`staff-store-${storeId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${storeId}` },
+        (payload) => {
+          const s = payload.new as Store
+          setStoreStats({ current_serving: s.current_serving, last_queue_number: s.last_queue_number })
+        }
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
   }, [storeId])
 
   const act = async (key: string, fn: () => Promise<unknown>) => {
@@ -93,6 +112,26 @@ export function StaffQueuePanel({ storeId, initialTickets }: StaffQueuePanelProp
 
   return (
     <div className="space-y-4">
+      {/* Live stats bar */}
+      <div
+        className="grid grid-cols-3 divide-x divide-white/[0.06] rounded-2xl"
+        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        <div className="px-4 py-4 text-center">
+          <p className="text-2xl font-black tabular-nums text-white">
+            {storeStats.current_serving === 0 ? '—' : storeStats.current_serving}
+          </p>
+          <p className="text-xs text-white/40">Now serving</p>
+        </div>
+        <div className="px-4 py-4 text-center">
+          <p className="text-2xl font-black tabular-nums text-gradient">{waitingCount}</p>
+          <p className="text-xs text-white/40">Waiting</p>
+        </div>
+        <div className="px-4 py-4 text-center">
+          <p className="text-2xl font-black tabular-nums text-white">{storeStats.last_queue_number}</p>
+          <p className="text-xs text-white/40">Total today</p>
+        </div>
+      </div>
       {/* Call Next CTA */}
       <button
         onClick={() => act('call_next', () => callNext(storeId))}

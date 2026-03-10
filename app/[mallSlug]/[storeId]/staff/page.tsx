@@ -86,33 +86,13 @@ export default async function StaffDashboardPage({ params }: Props) {
         <CutoffButton storeId={store.id} initialIsCutoff={store.is_cutoff} />
       </div>
 
-      {/* Stats bar */}
-      <div style={{ background: 'rgba(255,255,255,0.04)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-        <div className="mx-auto grid max-w-2xl grid-cols-3 divide-x divide-white/[0.06] px-0">
-          <div className="px-4 py-4 text-center">
-            <p className="text-2xl font-black tabular-nums text-white">
-              {store.current_serving === 0 ? '—' : store.current_serving}
-            </p>
-            <p className="text-xs text-white/40">Now serving</p>
-          </div>
-          <div className="px-4 py-4 text-center">
-            <p className="text-2xl font-black tabular-nums text-gradient">
-              {tickets?.filter((t) => t.status === 'waiting').length ?? 0}
-            </p>
-            <p className="text-xs text-white/40">Waiting</p>
-          </div>
-          <div className="px-4 py-4 text-center">
-            <p className="text-2xl font-black tabular-nums text-white">
-              {store.last_queue_number}
-            </p>
-            <p className="text-xs text-white/40">Total today</p>
-          </div>
-        </div>
-      </div>
-
       {/* Queue management */}
       <div className="mx-auto max-w-2xl px-4 py-4">
-        <StaffQueuePanel storeId={store.id} initialTickets={tickets ?? []} />
+        <StaffQueuePanel
+          storeId={store.id}
+          initialTickets={tickets ?? []}
+          initialStore={{ current_serving: store.current_serving, last_queue_number: store.last_queue_number }}
+        />
       </div>
     </main>
   )
