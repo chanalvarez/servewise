@@ -15,10 +15,6 @@ export const metadata: Metadata = {
   title: 'ServeWise — Skip the Line',
   description:
     'Join virtual queues across multiple stores without creating an account. Real-time updates, instant tickets.',
-  icons: {
-    icon: '/icon.png',
-    apple: '/apple-icon.png',
-  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
