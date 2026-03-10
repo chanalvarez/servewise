@@ -1,43 +1,77 @@
 # ServeWise
 
-A high-performance, real-time multi-mall virtual queuing system. Customers join store queues across different malls with no account required. Staff manage queues via a dedicated dashboard.
+> Skip the line, virtually.
+
+ServeWise is a real-time virtual queue management system for shopping malls. Customers scan a QR code at the mall entrance, browse stores, and join queues instantly — no app download, no account required. Store staff manage their queue from a dedicated dashboard on any device.
+
+---
+
+## Features
+
+### For Customers
+- **QR code entry** — scan once at the mall entrance, access every store's queue
+- **No app, no account** — works entirely in the phone's browser; anonymous session is created automatically
+- **Browse & filter** — search stores by name or filter by category; live busyness indicator per store
+- **Instant ticket** — join a queue and get a numbered ticket in seconds
+- **Live tracking** — "Now Serving" board updates in real time without refreshing
+- **Multi-queue** — hold tickets at multiple stores at the same time
+- **Active tickets drawer** — always accessible, floats above every page
+- **No-show countdown** — if called but not present, a 5-minute timer appears before the ticket is voided
+- **Queue closed notice** — clear warning when a store has stopped accepting new customers
+
+### For Staff
+- **Secure login** — email and password, scoped to a single store
+- **Live queue panel** — see all waiting, called, and no-show tickets in real time
+- **Call next** — one tap advances the queue; the previous ticket auto-completes
+- **No-show** — marks the current customer; pg_cron auto-voids the ticket after 5 minutes
+- **Vibe toggle** — broadcast store occupancy (Not Busy / Moderate / Very Busy) to the customer directory
+- **Open / Close** — controls whether the store accepts new queue entries
+- **Queue cutoff** — stops new joins near closing time; customers already in queue are unaffected
+
+---
 
 ## Tech Stack
 
-- **Frontend**: Next.js 15 (App Router), Tailwind CSS, Lucide icons
-- **Backend**: Supabase (Auth, PostgreSQL, Realtime, pg_cron)
-- **Identity**: Supabase Anonymous Auth (no sign-up required for customers)
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 15 (App Router) |
+| Styling | Tailwind CSS |
+| Database | Supabase (PostgreSQL) |
+| Auth | Supabase Auth — anonymous for customers, email/password for staff |
+| Real-time | Supabase Realtime (WebSocket) |
+| Scheduled jobs | pg_cron — auto-voids no-show tickets after 5 minutes |
+| Deployment | Vercel |
+
+---
 
 ## Getting Started
 
 ### Prerequisites
 
-Install [Node.js 20+](https://nodejs.org/) and [npm](https://www.npmjs.com/).
+- [Node.js 20+](https://nodejs.org)
+- A [Supabase](https://supabase.com) project (free tier works)
 
-### 1. Set up Supabase
+### 1. Set up the database
 
-1. Create a project at [supabase.com](https://supabase.com)
-2. Go to **SQL Editor** and run `supabase/schema.sql` in full
-3. Run `supabase/seed.sql` to populate sample malls and stores
-4. Enable **Anonymous Sign-ins** in **Authentication → Providers → Anonymous**
-5. Enable **pg_cron** in **Database → Extensions** (search for `pg_cron`)
+In your Supabase project, go to **SQL Editor** and run:
 
-### 2. Configure environment
+1. `supabase/schema.sql` — creates all tables, RLS policies, and RPCs
+2. `supabase/seed.sql` — populates sample malls and stores
 
-Copy `.env.local` and fill in your Supabase credentials:
+Then enable two things in your Supabase dashboard:
+- **Authentication → Providers → Anonymous** — turn on Anonymous Sign-ins
+- **Database → Extensions** — enable `pg_cron`
 
-```bash
-cp .env.local .env.local.bak   # backup the template
-```
+### 2. Configure environment variables
 
-Edit `.env.local`:
+Create a `.env.local` file in the project root:
 
-```
+```env
 NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 ```
 
-Both values are found in **Project Settings → API**.
+Both values are in **Supabase → Project Settings → API**.
 
 ### 3. Install and run
 
@@ -52,40 +86,82 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Creating Staff Accounts
 
-1. In Supabase Dashboard → **Authentication → Users → Add user**, create an email/password user
-2. Copy their UUID
-3. In **SQL Editor**, link them to a store:
+Staff accounts are created manually through the Supabase dashboard.
+
+1. Go to **Authentication → Users → Add user** and create an email/password user
+2. Copy the user's UUID
+3. Run this in **SQL Editor** to link them to a store:
 
 ```sql
 INSERT INTO staff (id, store_id, name)
 VALUES (
-  '<auth-user-uuid>',
-  (SELECT id FROM stores WHERE name = 'Starbucks Coffee' LIMIT 1),
-  'Store Manager'
+  '<user-uuid>',
+  (SELECT id FROM stores WHERE name = 'Store Name' LIMIT 1),
+  'Staff Name'
 );
 ```
 
-Staff can then log in at `/{mallSlug}/{storeId}/staff`.
+Staff can then log in at `/{mallSlug}/{storeId}/staff/login`.
 
 ---
 
 ## URL Structure
 
-| Path | Description |
-|------|-------------|
-| `/` | Mall selection landing page |
+| Path | Page |
+|---|---|
+| `/` | Home — mall selection |
 | `/{mallSlug}` | Store directory for a mall |
-| `/{mallSlug}/{storeId}` | Customer queue view (join queue) |
-| `/{mallSlug}/{storeId}/staff` | Staff dashboard (auth required) |
+| `/{mallSlug}/{storeId}` | Customer queue view |
 | `/{mallSlug}/{storeId}/staff/login` | Staff login |
+| `/{mallSlug}/{storeId}/staff` | Staff dashboard |
+
+QR codes at mall entrances point to `/{mallSlug}`.
 
 ---
 
-## Key Features
+## Database Schema
 
-- **Real-time "Now Serving"** — Supabase Realtime WebSocket subscriptions push queue updates instantly
-- **My Active Tickets drawer** — persists across all pages via React context; floats above the page
-- **Multiple simultaneous queues** — join any number of stores at once
-- **5-minute no-show protocol** — staff marks no-show; pg_cron auto-voids after 5 min if customer doesn't arrive
-- **Vibe status** — staff toggle store occupancy (not busy / moderate / very busy); updates live on the directory
-- **Anonymous auth** — customers need no account; Supabase anonymous auth provides a persistent identity for RLS
+```
+malls              stores                   tickets
+─────              ──────                   ───────
+id                 id                       id
+name               mall_id → malls          store_id → stores
+slug               name                     customer_id
+address            category                 queue_number
+city               floor / unit_number      status
+                   vibe_status              no_show_triggered_at
+                   current_serving          created_at / updated_at
+                   last_queue_number
+                   is_open
+                   is_cutoff
+
+staff
+─────
+id → auth.users
+store_id → stores
+name
+```
+
+---
+
+## Security
+
+All tables have **Row Level Security (RLS)** enabled at the database level. Key rules:
+
+- Customers can only read their own tickets
+- Staff can only update their own store
+- All queue operations run through `SECURITY DEFINER` RPCs — no direct table writes from clients
+- Joining a queue is blocked at the database level if the store is closed or in cutoff mode
+- No personal data is collected from customers — anonymous sessions only
+
+---
+
+## Deployment
+
+The app is designed to deploy on [Vercel](https://vercel.com) with zero configuration:
+
+```bash
+vercel deploy
+```
+
+Add your `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` as environment variables in the Vercel project settings before deploying.
