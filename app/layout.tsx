@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import { ActiveTicketsProvider } from '@/context/ActiveTicketsContext'
 import { ActiveTicketsDrawer } from '@/components/ActiveTicketsDrawer'
+import { DemoGuard } from '@/components/DemoGuard'
 import { Analytics } from '@vercel/analytics/react'
 
 const inter = Inter({
@@ -29,15 +30,23 @@ export const viewport: Viewport = {
   maximumScale: 1,
 }
 
+const demoMode = process.env.NEXT_PUBLIC_IS_DEMO === 'true'
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={inter.variable}>
-        <body className="font-sans" suppressHydrationWarning>
-        <ActiveTicketsProvider>
-          {children}
-          <ActiveTicketsDrawer />
-          <Analytics />
-        </ActiveTicketsProvider>
+      <body
+        className="font-sans"
+        suppressHydrationWarning
+        style={demoMode ? { paddingTop: 48 } : undefined}
+      >
+        <DemoGuard>
+          <ActiveTicketsProvider>
+            {children}
+            <ActiveTicketsDrawer />
+            <Analytics />
+          </ActiveTicketsProvider>
+        </DemoGuard>
       </body>
     </html>
   )

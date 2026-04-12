@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { updateVibeStatus } from '@/lib/actions/queue'
+import { useDemoRestriction } from '@/components/DemoGuard'
 import type { VibeStatus } from '@/types'
 
 const OPTIONS: Array<{
@@ -42,9 +43,11 @@ interface VibeToggleProps {
 export function VibeToggle({ storeId, currentStatus }: VibeToggleProps) {
   const [status, setStatus] = useState<VibeStatus>(currentStatus)
   const [loading, setLoading] = useState(false)
+  const { blockIfDemo } = useDemoRestriction()
 
   const handleChange = async (next: VibeStatus) => {
     if (next === status || loading) return
+    if (blockIfDemo()) return
     const prev = status
     setStatus(next)
     setLoading(true)

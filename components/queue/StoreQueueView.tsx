@@ -9,6 +9,7 @@ import { useActiveTickets } from '@/context/ActiveTicketsContext'
 import { NowServingBoard } from './NowServingBoard'
 import { NoShowCountdown } from './NoShowCountdown'
 import { VibeStatusBadge } from '@/components/store/VibeStatusBadge'
+import { useDemoRestriction } from '@/components/DemoGuard'
 import type { Mall, Store, Ticket } from '@/types'
 
 interface StoreQueueViewProps {
@@ -24,6 +25,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   const [error, setError] = useState<string | null>(null)
 
   const { tickets: activeTickets, refreshTickets, setDrawerOpen } = useActiveTickets()
+  const { blockIfDemo } = useDemoRestriction()
 
   // My ticket for this store (from global context)
   const myTicket = activeTickets.find((t) => t.store.id === store.id)
@@ -94,6 +96,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   }, [store.id])
 
   const handleJoin = async () => {
+    if (blockIfDemo()) return
     setJoining(true)
     setError(null)
     try {

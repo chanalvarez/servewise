@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { X, ExternalLink, Clock, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
 import { leaveQueue } from '@/lib/actions/queue'
+import { useDemoRestriction } from '@/components/DemoGuard'
 import { NoShowCountdown } from './NoShowCountdown'
 import type { ActiveTicket } from '@/types'
 
@@ -60,12 +61,14 @@ interface QueueTicketProps {
 export function QueueTicket({ ticket, onRemove }: QueueTicketProps) {
   const [leaving, setLeaving] = useState(false)
   const [leaveError, setLeaveError] = useState<string | null>(null)
+  const { blockIfDemo } = useDemoRestriction()
   const cfg = STATUS_CONFIG[ticket.status]
   const Icon = cfg.icon
   const aheadCount = Math.max(0, ticket.queue_number - ticket.store.current_serving - 1)
 
   const handleLeave = async () => {
     if (leaving) return
+    if (blockIfDemo()) return
     setLeaving(true)
     setLeaveError(null)
     try {

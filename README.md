@@ -179,3 +179,11 @@ vercel deploy
 ```
 
 Add your `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` as environment variables in the Vercel project settings before deploying.
+
+### Portfolio demo (optional)
+
+For a read-only demo deployment:
+
+1. Copy `.env.demo` to `.env.local` (or set the same variables in Vercel).
+2. In Supabase SQL Editor, run `supabase/schema.sql` then `supabase/demo-seed.sql` on a **separate** demo project.
+3. With `NEXT_PUBLIC_IS_DEMO=true`, a top banner appears and mutating actions (join queue, leave queue, staff actions, staff login) show a **Demo Restriction** modal instead of changing data.

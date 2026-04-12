@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { ShieldOff, ShieldCheck, Loader2 } from 'lucide-react'
 import { toggleCutoff } from '@/lib/actions/queue'
+import { useDemoRestriction } from '@/components/DemoGuard'
 
 interface CutoffButtonProps {
   storeId: string
@@ -12,9 +13,11 @@ interface CutoffButtonProps {
 export function CutoffButton({ storeId, initialIsCutoff }: CutoffButtonProps) {
   const [isCutoff, setIsCutoff] = useState(initialIsCutoff)
   const [loading, setLoading] = useState(false)
+  const { blockIfDemo } = useDemoRestriction()
 
   const handleToggle = async () => {
     if (loading) return
+    if (blockIfDemo()) return
     const next = !isCutoff
     setIsCutoff(next)
     setLoading(true)

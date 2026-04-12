@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { callNext, markNoShow, markArrived } from '@/lib/actions/queue'
+import { useDemoRestriction } from '@/components/DemoGuard'
 import { NoShowCountdown } from '@/components/queue/NoShowCountdown'
 import { SkipForward, AlertTriangle, CheckCircle, Users } from 'lucide-react'
 import type { Store, Ticket } from '@/types'
@@ -27,6 +28,7 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
   const [tickets, setTickets] = useState<Ticket[]>(initialTickets)
   const [storeStats, setStoreStats] = useState(initialStore)
   const [loading, setLoading] = useState<string | null>(null)
+  const { blockIfDemo } = useDemoRestriction()
   const router = useRouter()
   const params = useParams<{ mallSlug: string; storeId: string }>()
 
@@ -95,6 +97,7 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
   }, [storeId])
 
   const act = async (key: string, fn: () => Promise<unknown>) => {
+    if (blockIfDemo()) return
     setLoading(key)
     try {
       await fn()

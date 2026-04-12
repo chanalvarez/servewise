@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { useDemoRestriction } from '@/components/DemoGuard'
 import { Layers, Loader2, Lock } from 'lucide-react'
 
 export default function StaffLoginPage() {
@@ -13,9 +14,11 @@ export default function StaffLoginPage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { blockIfDemo } = useDemoRestriction()
 
   const handleLogin = async (e?: React.FormEvent) => {
     e?.preventDefault()
+    if (blockIfDemo()) return
     setLoading(true)
     setError(null)
 
