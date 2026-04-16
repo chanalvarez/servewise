@@ -47,34 +47,61 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
   // Realtime: keep ticket list live for staff dashboard
   useEffect(() => {
     const supabase = createClient()
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    let active = true
 
-    const channel = supabase
-      .channel(`staff-panel-${storeId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'tickets',
-          filter: `store_id=eq.${storeId}`,
-        },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setTickets((prev) => [...prev, payload.new as Ticket])
-          } else if (payload.eventType === 'UPDATE') {
-            setTickets((prev) =>
-              prev.map((t) =>
-                t.id === (payload.new as Ticket).id ? (payload.new as Ticket) : t
+    const subscribe = () => {
+      if (!active) return
+      if (channel) return
+
+      channel = supabase
+        .channel(`staff-panel-${storeId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'tickets',
+            filter: `store_id=eq.${storeId}`,
+          },
+          (payload) => {
+            if (payload.eventType === 'INSERT') {
+              setTickets((prev) => [...prev, payload.new as Ticket])
+            } else if (payload.eventType === 'UPDATE') {
+              setTickets((prev) =>
+                prev.map((t) =>
+                  t.id === (payload.new as Ticket).id ? (payload.new as Ticket) : t
+                )
               )
-            )
-          } else if (payload.eventType === 'DELETE') {
-            setTickets((prev) => prev.filter((t) => t.id !== (payload.old as Ticket).id))
+            } else if (payload.eventType === 'DELETE') {
+              setTickets((prev) =>
+                prev.filter((t) => t.id !== (payload.old as Ticket).id)
+              )
+            }
           }
-        }
-      )
-      .subscribe()
+        )
+        .subscribe()
+    }
 
-    return () => { supabase.removeChannel(channel) }
+    // Subscribe only after we have a non-anonymous staff session.
+    // This avoids the websocket connecting using an initial anonymous session token,
+    // which can cause "updates only after refresh" in some deployments.
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const isAnonymous = session?.user?.is_anonymous ?? true
+      if (!session || isAnonymous) return
+      subscribe()
+    })
+
+    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange((event, session) => {
+      const isAnonymous = session?.user?.is_anonymous ?? true
+      if (event === 'SIGNED_IN' && !isAnonymous) subscribe()
+    })
+
+    return () => {
+      active = false
+      if (channel) supabase.removeChannel(channel)
+      authSub.unsubscribe()
+    }
   }, [storeId])
 
   // Realtime: keep store stats (current_serving, last_queue_number) live
