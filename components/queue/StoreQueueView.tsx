@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Loader2, MapPin, LogIn, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
 import { joinQueue } from '@/lib/actions/queue'
 import { useActiveTickets } from '@/context/ActiveTicketsContext'
 import { NowServingBoard } from './NowServingBoard'
@@ -41,55 +42,110 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   // Realtime: store updates (vibe, current_serving, is_open)
   useEffect(() => {
     const supabase = createClient()
+    let cancelled = false
+    let storeChannel: ReturnType<typeof supabase.channel> | null = null
 
-    const storeChannel = supabase
-      .channel(`store-view-${store.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${store.id}` },
-        (payload) => setStore(payload.new as Store)
-      )
-      .subscribe()
+    const setup = async () => {
+      await syncRealtimeAuth(supabase)
+      if (cancelled) return
+
+      const ch = supabase
+        .channel(`store-view-${store.id}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${store.id}` },
+          (payload) => setStore(payload.new as Store)
+        )
+        .subscribe()
+      if (cancelled) {
+        void supabase.removeChannel(ch)
+        return
+      }
+      storeChannel = ch
+    }
+
+    void setup()
+
+    const {
+      data: { subscription: authSub },
+    } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+        await syncRealtimeAuth(supabase)
+      }
+    })
 
     return () => {
-      supabase.removeChannel(storeChannel)
+      cancelled = true
+      authSub.unsubscribe()
+      if (storeChannel) void supabase.removeChannel(storeChannel)
     }
   }, [store.id])
 
   // Realtime: all tickets for this store (for waiting count)
   useEffect(() => {
     const supabase = createClient()
+    let cancelled = false
+    let ticketsChannel: ReturnType<typeof supabase.channel> | null = null
+    let pollTimer: ReturnType<typeof setInterval> | null = null
 
-    const ticketsChannel = supabase
-      .channel(`tickets-view-${store.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
-        () => {
+    const refetchTicketsAndStore = () => {
+      supabase
+        .from('tickets')
+        .select('*')
+        .eq('store_id', store.id)
+        .in('status', ['waiting', 'called', 'no_show'])
+        .order('queue_number')
+        .then(({ data }) => {
+          if (!cancelled) setTickets(data ?? [])
           supabase
-            .from('tickets')
-            .select('*')
-            .eq('store_id', store.id)
-            .in('status', ['waiting', 'called', 'no_show'])
-            .order('queue_number')
-            .then(({ data }) => {
-              setTickets(data ?? [])
-              // Sync store counters too so waitingCount stays accurate
-              supabase
-                .from('stores')
-                .select('last_queue_number, current_serving')
-                .eq('id', store.id)
-                .single()
-                .then(({ data: s }) => {
-                  if (s) setStore((prev) => ({ ...prev, ...s }))
-                })
+            .from('stores')
+            .select('last_queue_number, current_serving')
+            .eq('id', store.id)
+            .single()
+            .then(({ data: s }) => {
+              if (s && !cancelled) setStore((prev) => ({ ...prev, ...s }))
             })
-        }
-      )
-      .subscribe()
+        })
+    }
+
+    const setup = async () => {
+      await syncRealtimeAuth(supabase)
+      if (cancelled) return
+
+      const ch = supabase
+        .channel(`tickets-view-${store.id}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
+          () => refetchTicketsAndStore()
+        )
+        .subscribe()
+      if (cancelled) {
+        void supabase.removeChannel(ch)
+        return
+      }
+      ticketsChannel = ch
+
+      pollTimer = setInterval(() => {
+        if (document.visibilityState === 'visible') refetchTicketsAndStore()
+      }, 4000)
+    }
+
+    void setup()
+
+    const {
+      data: { subscription: authSub },
+    } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+        await syncRealtimeAuth(supabase)
+      }
+    })
 
     return () => {
-      supabase.removeChannel(ticketsChannel)
+      cancelled = true
+      if (pollTimer) clearInterval(pollTimer)
+      authSub.unsubscribe()
+      if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
     }
   }, [store.id])
 

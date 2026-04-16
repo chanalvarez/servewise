@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
 import { callNext, markNoShow, markArrived } from '@/lib/actions/queue'
 import { NoShowCountdown } from '@/components/queue/NoShowCountdown'
 import { SkipForward, AlertTriangle, CheckCircle, Users } from 'lucide-react'
@@ -42,56 +43,117 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
     return () => subscription.unsubscribe()
   }, [router, params.mallSlug, params.storeId])
 
-  // Realtime: keep ticket list live for staff dashboard
+  // Realtime + light polling: staff must send JWT on the Realtime socket (RLS).
   useEffect(() => {
     const supabase = createClient()
+    let cancelled = false
+    let ticketsChannel: ReturnType<typeof supabase.channel> | null = null
+    let storeChannel: ReturnType<typeof supabase.channel> | null = null
+    let pollTimer: ReturnType<typeof setInterval> | null = null
 
-    const channel = supabase
-      .channel(`staff-panel-${storeId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'tickets',
-          filter: `store_id=eq.${storeId}`,
-        },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setTickets((prev) => [...prev, payload.new as Ticket])
-          } else if (payload.eventType === 'UPDATE') {
-            setTickets((prev) =>
-              prev.map((t) =>
-                t.id === (payload.new as Ticket).id ? (payload.new as Ticket) : t
+    const refetchStoreData = async () => {
+      const [{ data: ticketRows }, { data: storeRow }] = await Promise.all([
+        supabase
+          .from('tickets')
+          .select('*')
+          .eq('store_id', storeId)
+          .in('status', ['waiting', 'called', 'no_show'])
+          .order('queue_number'),
+        supabase
+          .from('stores')
+          .select('current_serving, last_queue_number')
+          .eq('id', storeId)
+          .single(),
+      ])
+      if (cancelled) return
+      if (ticketRows) setTickets(ticketRows as Ticket[])
+      if (storeRow)
+        setStoreStats({
+          current_serving: storeRow.current_serving,
+          last_queue_number: storeRow.last_queue_number,
+        })
+    }
+
+    const subscribe = async () => {
+      await syncRealtimeAuth(supabase)
+      if (cancelled) return
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      const isAnonymous = session?.user?.is_anonymous ?? true
+      if (!session || isAnonymous) return
+
+      ticketsChannel = supabase
+        .channel(`staff-panel-${storeId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'tickets',
+            filter: `store_id=eq.${storeId}`,
+          },
+          (payload) => {
+            if (payload.eventType === 'INSERT') {
+              setTickets((prev) => [...prev, payload.new as Ticket])
+            } else if (payload.eventType === 'UPDATE') {
+              setTickets((prev) =>
+                prev.map((t) =>
+                  t.id === (payload.new as Ticket).id ? (payload.new as Ticket) : t
+                )
               )
-            )
-          } else if (payload.eventType === 'DELETE') {
-            setTickets((prev) => prev.filter((t) => t.id !== (payload.old as Ticket).id))
+            } else if (payload.eventType === 'DELETE') {
+              setTickets((prev) => prev.filter((t) => t.id !== (payload.old as Ticket).id))
+            }
           }
-        }
-      )
-      .subscribe()
+        )
+        .subscribe()
 
-    return () => { supabase.removeChannel(channel) }
-  }, [storeId])
+      storeChannel = supabase
+        .channel(`staff-store-${storeId}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${storeId}` },
+          (payload) => {
+            const s = payload.new as Store
+            setStoreStats({
+              current_serving: s.current_serving,
+              last_queue_number: s.last_queue_number,
+            })
+          }
+        )
+        .subscribe()
 
-  // Realtime: keep store stats (current_serving, last_queue_number) live
-  useEffect(() => {
-    const supabase = createClient()
+      if (cancelled) {
+        if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
+        if (storeChannel) void supabase.removeChannel(storeChannel)
+        return
+      }
 
-    const channel = supabase
-      .channel(`staff-store-${storeId}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${storeId}` },
-        (payload) => {
-          const s = payload.new as Store
-          setStoreStats({ current_serving: s.current_serving, last_queue_number: s.last_queue_number })
-        }
-      )
-      .subscribe()
+      // Fallback if Realtime drops (common with RLS + missing JWT on socket)
+      pollTimer = setInterval(() => {
+        if (document.visibilityState === 'visible') void refetchStoreData()
+      }, 4000)
+    }
 
-    return () => { supabase.removeChannel(channel) }
+    void subscribe()
+
+    const {
+      data: { subscription: authSub },
+    } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+        await syncRealtimeAuth(supabase)
+      }
+    })
+
+    return () => {
+      cancelled = true
+      if (pollTimer) clearInterval(pollTimer)
+      authSub.unsubscribe()
+      if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
+      if (storeChannel) void supabase.removeChannel(storeChannel)
+    }
   }, [storeId])
 
   const act = async (key: string, fn: () => Promise<unknown>) => {

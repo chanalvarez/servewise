@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
 import type { ActiveTicket } from '@/types'
 
 interface ActiveTicketsContextValue {
@@ -101,25 +102,58 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
     })
 
     return () => subscription.unsubscribe()
-  }, [fetchTickets])
+  }, [fetchTickets, isStaffPage])
 
   // Global realtime subscription — re-fetch on any ticket change affecting this customer
   useEffect(() => {
     const supabase = supabaseRef.current
+    let cancelled = false
+    let channel: ReturnType<typeof supabase.channel> | null = null
 
-    const channel = supabase
-      .channel('active-tickets-global')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'tickets' },
-        () => fetchTickets()
-      )
-      .subscribe()
+    const setup = async () => {
+      await syncRealtimeAuth(supabase)
+      if (cancelled) return
+
+      const ch = supabase
+        .channel('active-tickets-global')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'tickets' },
+          () => fetchTickets()
+        )
+        .subscribe()
+      if (cancelled) {
+        void supabase.removeChannel(ch)
+        return
+      }
+      channel = ch
+    }
+
+    void setup()
+
+    const {
+      data: { subscription: authSub },
+    } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+        await syncRealtimeAuth(supabase)
+      }
+    })
 
     return () => {
-      supabase.removeChannel(channel)
+      cancelled = true
+      authSub.unsubscribe()
+      if (channel) void supabase.removeChannel(channel)
     }
   }, [fetchTickets])
+
+  // Fallback when Realtime events don’t arrive (same RLS/socket issue as staff)
+  useEffect(() => {
+    if (isStaffPage) return
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') void fetchTickets()
+    }, 5000)
+    return () => clearInterval(id)
+  }, [fetchTickets, isStaffPage])
 
   const removeTicket = (ticketId: string) => {
     setTickets((prev) => prev.filter((t) => t.id !== ticketId))
