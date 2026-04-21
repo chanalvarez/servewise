@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
@@ -43,47 +43,32 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
     return () => subscription.unsubscribe()
   }, [router, params.mallSlug, params.storeId])
 
-  // ── Polling fallback (unconditional) ─────────────────────────────────────
-  // This runs regardless of whether the Realtime subscription succeeds.
-  // Previously the poll timer lived inside subscribe() — if that function
-  // returned early (auth not ready yet), there was zero update mechanism.
-  useEffect(() => {
-    const supabase = createClient()
-    let cancelled = false
-
-    const refetch = async () => {
-      if (cancelled || document.visibilityState !== 'visible') return
-      const [{ data: ticketRows }, { data: storeRow }] = await Promise.all([
-        supabase
-          .from('tickets')
-          .select('*')
-          .eq('store_id', storeId)
-          .in('status', ['waiting', 'called', 'no_show'])
-          .order('queue_number'),
-        supabase
-          .from('stores')
-          .select('current_serving, last_queue_number')
-          .eq('id', storeId)
-          .single(),
-      ])
-      if (cancelled) return
-      if (ticketRows) setTickets(ticketRows as Ticket[])
-      if (storeRow)
-        setStoreStats({
-          current_serving: storeRow.current_serving,
-          last_queue_number: storeRow.last_queue_number,
-        })
-    }
-
-    // Fire once immediately to sync state after mount
-    void refetch()
-    const pollTimer = setInterval(() => void refetch(), 2000)
-
-    return () => {
-      cancelled = true
-      clearInterval(pollTimer)
+  // ── Polling via server-side API route (guaranteed to work) ──────────────
+  // Uses /api/staff/queue which authenticates via server-side cookie session —
+  // the same path as the initial SSR load. This bypasses any browser-client
+  // auth issues that prevented the previous client-side polling from working.
+  const apiFetch = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/staff/queue?storeId=${storeId}`)
+      if (!res.ok) return
+      const { tickets: ticketRows, store: storeRow } = await res.json() as {
+        tickets: Ticket[]
+        store: { current_serving: number; last_queue_number: number } | null
+      }
+      setTickets(ticketRows)
+      if (storeRow) setStoreStats(storeRow)
+    } catch {
+      // network blip — next poll will recover
     }
   }, [storeId])
+
+  useEffect(() => {
+    void apiFetch()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') void apiFetch()
+    }, 2000)
+    return () => clearInterval(id)
+  }, [apiFetch])
 
   // ── Realtime subscription (best-effort on top of polling) ────────────────
   useEffect(() => {
@@ -200,6 +185,8 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
     setLoading(key)
     try {
       await fn()
+      // Immediately sync UI — don't wait for the next 2-second poll
+      void apiFetch()
     } catch (err) {
       console.error(err)
     } finally {
