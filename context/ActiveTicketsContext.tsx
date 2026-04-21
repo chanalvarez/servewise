@@ -160,7 +160,7 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
     if (isStaffPage) return
     const id = setInterval(() => {
       if (document.visibilityState === 'visible') void fetchTickets()
-    }, 5000)
+    }, 3000)
     return () => clearInterval(id)
   }, [fetchTickets, isStaffPage])
 

@@ -38,7 +38,35 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   const storeQueueCount = Math.max(0, store.last_queue_number - store.current_serving)
   const waitingCount = Math.max(ticketActiveCount, storeQueueCount)
 
-  // Realtime: store updates (vibe, current_serving, is_open)
+  // ── Unconditional store polling (guaranteed — stores are public, no auth needed) ──
+  // Keeps current_serving, last_queue_number, is_open, is_cutoff, vibe_status fresh
+  // even when Realtime WebSocket auth isn't ready yet.
+  useEffect(() => {
+    const supabase = createClient()
+    let cancelled = false
+
+    const pollStore = async () => {
+      if (cancelled) return
+      const { data } = await supabase
+        .from('stores')
+        .select('current_serving, last_queue_number, is_open, is_cutoff, vibe_status')
+        .eq('id', store.id)
+        .single()
+      if (data && !cancelled) setStore((prev) => ({ ...prev, ...data }))
+    }
+
+    void pollStore()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') void pollStore()
+    }, 3000)
+
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [store.id])
+
+  // ── Realtime: store updates (instant layer on top of polling) ────────────
   useEffect(() => {
     const supabase = createClient()
     let cancelled = false
@@ -56,21 +84,14 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
           (payload) => setStore(payload.new as Store)
         )
         .subscribe()
-      if (cancelled) {
-        void supabase.removeChannel(ch)
-        return
-      }
+      if (cancelled) { void supabase.removeChannel(ch); return }
       storeChannel = ch
     }
 
     void setup()
 
-    const {
-      data: { subscription: authSub },
-    } = supabase.auth.onAuthStateChange(async (event) => {
-      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
-        await syncRealtimeAuth(supabase)
-      }
+    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') await syncRealtimeAuth(supabase)
     })
 
     return () => {
@@ -80,31 +101,20 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
     }
   }, [store.id])
 
-  // Realtime: all tickets for this store (for waiting count)
+  // ── Realtime: tickets for this store (instant layer — polling is in ActiveTicketsContext) ──
   useEffect(() => {
     const supabase = createClient()
     let cancelled = false
     let ticketsChannel: ReturnType<typeof supabase.channel> | null = null
-    let pollTimer: ReturnType<typeof setInterval> | null = null
 
-    const refetchTicketsAndStore = () => {
+    const refetchTickets = () => {
       supabase
         .from('tickets')
         .select('*')
         .eq('store_id', store.id)
         .in('status', ['waiting', 'called', 'no_show'])
         .order('queue_number')
-        .then(({ data }) => {
-          if (!cancelled) setTickets(data ?? [])
-          supabase
-            .from('stores')
-            .select('last_queue_number, current_serving')
-            .eq('id', store.id)
-            .single()
-            .then(({ data: s }) => {
-              if (s && !cancelled) setStore((prev) => ({ ...prev, ...s }))
-            })
-        })
+        .then(({ data }) => { if (!cancelled) setTickets(data ?? []) })
     }
 
     const setup = async () => {
@@ -116,33 +126,21 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
-          () => refetchTicketsAndStore()
+          () => refetchTickets()
         )
         .subscribe()
-      if (cancelled) {
-        void supabase.removeChannel(ch)
-        return
-      }
+      if (cancelled) { void supabase.removeChannel(ch); return }
       ticketsChannel = ch
-
-      pollTimer = setInterval(() => {
-        if (document.visibilityState === 'visible') refetchTicketsAndStore()
-      }, 4000)
     }
 
     void setup()
 
-    const {
-      data: { subscription: authSub },
-    } = supabase.auth.onAuthStateChange(async (event) => {
-      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
-        await syncRealtimeAuth(supabase)
-      }
+    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') await syncRealtimeAuth(supabase)
     })
 
     return () => {
       cancelled = true
-      if (pollTimer) clearInterval(pollTimer)
       authSub.unsubscribe()
       if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
     }
