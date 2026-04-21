@@ -86,17 +86,19 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
       }
     })
 
+    // Safety net: unblock the UI after 4 s no matter what.
+    // Covers slow anonymous sign-in on PC browsers, ad-blockers, etc.
+    const safetyTimer = setTimeout(() => setIsLoading(false), 4000)
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) {
         if (!isStaffPage) {
           // signInAnonymously triggers SIGNED_IN → fetchTickets → isLoading(false)
           supabase.auth.signInAnonymously().catch((err) => {
             console.error('Anonymous sign-in failed:', err.message)
-            // Unblock the UI so the page isn't stuck loading forever
             setIsLoading(false)
           })
         } else {
-          // Staff page with no session — just unblock
           setIsLoading(false)
         }
       } else {
@@ -105,7 +107,10 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
       }
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      clearTimeout(safetyTimer)
+      subscription.unsubscribe()
+    }
   }, [fetchTickets, isStaffPage])
 
   // Global realtime subscription — re-fetch on any ticket change affecting this customer
