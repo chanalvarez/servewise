@@ -157,7 +157,9 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
       if (result.error) {
         const msg = result.error.toLowerCase()
         if (msg.includes('already in queue')) {
-          setError("You're already in the queue for this store.")
+          // Ticket was created on a previous attempt — just surface it.
+          await refreshTickets()
+          setDrawerOpen(true)
         } else {
           setError(result.error)
         }
