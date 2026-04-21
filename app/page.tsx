@@ -80,12 +80,18 @@ export default async function HomePage() {
             <span className="text-[10px] text-white/20">{malls?.length ?? 0} locations</span>
           </div>
 
+          {/*
+            Mobile  (<768px): cards use flex-1 so they stretch to fill all remaining
+                               viewport height — no empty space, no scrolling.
+            Tablet/Desktop (≥768px): cards are flex-none with a fixed height so they
+                               look compact and proportional on large screens.
+          */}
           <div className="flex flex-1 flex-col gap-2">
             {malls?.map((mall: Mall) => (
               <Link
                 key={mall.id}
                 href={`/${mall.slug}`}
-                className="group flex flex-1 items-center gap-4 rounded-2xl px-4 py-3 transition-all duration-300 hover:border-indigo-500/30"
+                className="group flex flex-1 items-center gap-4 rounded-2xl px-4 py-3 transition-all duration-300 hover:border-indigo-500/30 md:h-[72px] md:flex-none"
                 style={{
                   background: 'rgba(255,255,255,0.05)',
                   backdropFilter: 'blur(20px)',
