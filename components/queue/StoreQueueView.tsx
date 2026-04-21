@@ -24,7 +24,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const { tickets: activeTickets, refreshTickets, setDrawerOpen } = useActiveTickets()
+  const { tickets: activeTickets, isLoading: ticketsLoading, refreshTickets, setDrawerOpen } = useActiveTickets()
 
   // My ticket for this store (from global context)
   const myTicket = activeTickets.find((t) => t.store.id === store.id)
@@ -258,7 +258,17 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
           </div>
         )}
 
-        {myTicket ? (
+        {ticketsLoading ? (
+          /* Still resolving whether the user has a ticket — show a neutral skeleton
+             so the Join button never flashes for someone who already joined. */
+          <div
+            className="rounded-2xl p-5 text-center animate-pulse"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+          >
+            <div className="mx-auto h-3 w-32 rounded-full bg-white/10" />
+            <div className="mx-auto mt-2 h-3 w-20 rounded-full bg-white/07" />
+          </div>
+        ) : myTicket ? (
           <div
             className="rounded-2xl p-5 text-center"
             style={
