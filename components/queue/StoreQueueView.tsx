@@ -150,22 +150,52 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   }, [store.id])
 
   const handleJoin = async () => {
+    // Pre-flight: if we already have a ticket (context loaded), just open the drawer.
+    if (myTicket) {
+      setDrawerOpen(true)
+      return
+    }
+
     setJoining(true)
     setError(null)
+
+    // Race the server action against a 12-second timeout.
+    // If the action completes server-side but the response never arrives
+    // (network drop / edge timeout), the timeout fires, we refresh tickets
+    // to surface the already-created ticket instead of hanging forever.
+    const timeoutSignal = new Promise<{ ticket: null; error: '__timeout__' }>(
+      (resolve) => setTimeout(() => resolve({ ticket: null, error: '__timeout__' }), 12000)
+    )
+
     try {
-      const result = await joinQueue(store.id)
-      if (result.error) {
-        const msg = result.error.toLowerCase()
-        if (msg.includes('already in queue')) {
-          // Ticket was created on a previous attempt — just surface it.
+      const result = await Promise.race([joinQueue(store.id), timeoutSignal])
+
+      const alreadyInQueue =
+        result.error === '__timeout__' ||
+        (typeof result.error === 'string' && result.error.toLowerCase().includes('already in queue'))
+
+      if (alreadyInQueue) {
+        // Ticket exists (created on this or a previous attempt) — surface it.
+        try {
           await refreshTickets()
           setDrawerOpen(true)
-        } else {
-          setError(result.error)
+        } catch {
+          setError('Your ticket is being processed. Pull down to refresh.')
         }
         return
       }
-      await refreshTickets()
+
+      if (result.error) {
+        setError(result.error)
+        return
+      }
+
+      // Successful join — load the new ticket.
+      try {
+        await refreshTickets()
+      } catch {
+        // Ticket was created; context refresh failing is non-fatal.
+      }
       setDrawerOpen(true)
     } catch {
       setError('Something went wrong. Please try again.')
