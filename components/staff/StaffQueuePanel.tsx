@@ -96,7 +96,12 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
           },
           (payload) => {
             if (payload.eventType === 'INSERT') {
-              setTickets((prev) => [...prev, payload.new as Ticket])
+              // Optimistically add ticket and refetch store stats (last_queue_number++)
+              setTickets((prev) => {
+                const already = prev.some((t) => t.id === (payload.new as Ticket).id)
+                return already ? prev : [...prev, payload.new as Ticket]
+              })
+              void refetchStoreData()
             } else if (payload.eventType === 'UPDATE') {
               setTickets((prev) =>
                 prev.map((t) =>
@@ -108,7 +113,11 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
             }
           }
         )
-        .subscribe()
+        .subscribe(async (status) => {
+          // Once the channel is live, do one immediate fetch so the panel
+          // is never stale (covers the window between SSR and WS handshake).
+          if (status === 'SUBSCRIBED') void refetchStoreData()
+        })
 
       storeChannel = supabase
         .channel(`staff-store-${storeId}`)

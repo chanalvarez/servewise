@@ -5,7 +5,6 @@ import Link from 'next/link'
 import { ArrowLeft, Loader2, MapPin, LogIn, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
-import { joinQueue } from '@/lib/actions/queue'
 import { useActiveTickets } from '@/context/ActiveTicketsContext'
 import { NowServingBoard } from './NowServingBoard'
 import { NoShowCountdown } from './NoShowCountdown'
@@ -150,7 +149,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   }, [store.id])
 
   const handleJoin = async () => {
-    // Pre-flight: if we already have a ticket (context loaded), just open the drawer.
+    // If we already have a ticket for this store, just open the drawer.
     if (myTicket) {
       setDrawerOpen(true)
       return
@@ -159,43 +158,25 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
     setJoining(true)
     setError(null)
 
-    // Race the server action against a 12-second timeout.
-    // If the action completes server-side but the response never arrives
-    // (network drop / edge timeout), the timeout fires, we refresh tickets
-    // to surface the already-created ticket instead of hanging forever.
-    const timeoutSignal = new Promise<{ ticket: null; error: '__timeout__' }>(
-      (resolve) => setTimeout(() => resolve({ ticket: null, error: '__timeout__' }), 12000)
-    )
-
     try {
-      const result = await Promise.race([joinQueue(store.id), timeoutSignal])
+      // Call the RPC directly from the browser — no Vercel serverless hop,
+      // no cold-start delay, no response-lost-in-transit issue.
+      const supabase = createClient()
+      const { error } = await supabase.rpc('join_queue', { p_store_id: store.id })
 
-      const alreadyInQueue =
-        result.error === '__timeout__' ||
-        (typeof result.error === 'string' && result.error.toLowerCase().includes('already in queue'))
-
-      if (alreadyInQueue) {
-        // Ticket exists (created on this or a previous attempt) — surface it.
-        try {
-          await refreshTickets()
+      if (error) {
+        if (error.message.toLowerCase().includes('already in queue')) {
+          // Ticket already exists — refresh to surface it
+          await refreshTickets().catch(() => {})
           setDrawerOpen(true)
-        } catch {
-          setError('Your ticket is being processed. Pull down to refresh.')
+          return
         }
+        setError(error.message)
         return
       }
 
-      if (result.error) {
-        setError(result.error)
-        return
-      }
-
-      // Successful join — load the new ticket.
-      try {
-        await refreshTickets()
-      } catch {
-        // Ticket was created; context refresh failing is non-fatal.
-      }
+      // Success — immediately refresh so myTicket is set and the board updates
+      await refreshTickets().catch(() => {})
       setDrawerOpen(true)
     } catch {
       setError('Something went wrong. Please try again.')
