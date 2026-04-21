@@ -71,32 +71,36 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Bootstrap: fire-and-forget anonymous auth, then load tickets via onAuthStateChange
+  // Bootstrap: sign in anonymously if needed, then load tickets.
+  // isLoading stays true until we know for sure whether the user has tickets or not.
+  // This prevents the Join button from flashing for users who already have a ticket.
   useEffect(() => {
     const supabase = supabaseRef.current
 
-    // Always unblock the UI immediately
-    setIsLoading(false)
-
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        // fetchTickets sets isLoading(false) in its finally block
         fetchTickets()
       }
     })
 
-    // On staff pages, never overwrite the staff session with anonymous auth.
-    // On customer pages, sign in anonymously if there is no session.
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) {
         if (!isStaffPage) {
+          // signInAnonymously triggers SIGNED_IN → fetchTickets → isLoading(false)
           supabase.auth.signInAnonymously().catch((err) => {
             console.error('Anonymous sign-in failed:', err.message)
+            // Unblock the UI so the page isn't stuck loading forever
+            setIsLoading(false)
           })
+        } else {
+          // Staff page with no session — just unblock
+          setIsLoading(false)
         }
       } else {
-        // Already have a session — load tickets directly
+        // Already have a session — fetchTickets sets isLoading(false)
         fetchTickets()
       }
     })
