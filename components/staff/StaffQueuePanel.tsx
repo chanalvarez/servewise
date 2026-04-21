@@ -43,13 +43,54 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
     return () => subscription.unsubscribe()
   }, [router, params.mallSlug, params.storeId])
 
-  // Realtime + light polling: staff must send JWT on the Realtime socket (RLS).
+  // ── Polling fallback (unconditional) ─────────────────────────────────────
+  // This runs regardless of whether the Realtime subscription succeeds.
+  // Previously the poll timer lived inside subscribe() — if that function
+  // returned early (auth not ready yet), there was zero update mechanism.
+  useEffect(() => {
+    const supabase = createClient()
+    let cancelled = false
+
+    const refetch = async () => {
+      if (cancelled || document.visibilityState !== 'visible') return
+      const [{ data: ticketRows }, { data: storeRow }] = await Promise.all([
+        supabase
+          .from('tickets')
+          .select('*')
+          .eq('store_id', storeId)
+          .in('status', ['waiting', 'called', 'no_show'])
+          .order('queue_number'),
+        supabase
+          .from('stores')
+          .select('current_serving, last_queue_number')
+          .eq('id', storeId)
+          .single(),
+      ])
+      if (cancelled) return
+      if (ticketRows) setTickets(ticketRows as Ticket[])
+      if (storeRow)
+        setStoreStats({
+          current_serving: storeRow.current_serving,
+          last_queue_number: storeRow.last_queue_number,
+        })
+    }
+
+    // Fire once immediately to sync state after mount
+    void refetch()
+    const pollTimer = setInterval(() => void refetch(), 2000)
+
+    return () => {
+      cancelled = true
+      clearInterval(pollTimer)
+    }
+  }, [storeId])
+
+  // ── Realtime subscription (best-effort on top of polling) ────────────────
   useEffect(() => {
     const supabase = createClient()
     let cancelled = false
     let ticketsChannel: ReturnType<typeof supabase.channel> | null = null
     let storeChannel: ReturnType<typeof supabase.channel> | null = null
-    let pollTimer: ReturnType<typeof setInterval> | null = null
 
     const refetchStoreData = async () => {
       const [{ data: ticketRows }, { data: storeRow }] = await Promise.all([
@@ -96,7 +137,6 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
           },
           (payload) => {
             if (payload.eventType === 'INSERT') {
-              // Optimistically add ticket and refetch store stats (last_queue_number++)
               setTickets((prev) => {
                 const already = prev.some((t) => t.id === (payload.new as Ticket).id)
                 return already ? prev : [...prev, payload.new as Ticket]
@@ -114,8 +154,6 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
           }
         )
         .subscribe(async (status) => {
-          // Once the channel is live, do one immediate fetch so the panel
-          // is never stale (covers the window between SSR and WS handshake).
           if (status === 'SUBSCRIBED') void refetchStoreData()
         })
 
@@ -137,13 +175,7 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
       if (cancelled) {
         if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
         if (storeChannel) void supabase.removeChannel(storeChannel)
-        return
       }
-
-      // Fallback if Realtime drops (common with RLS + missing JWT on socket)
-      pollTimer = setInterval(() => {
-        if (document.visibilityState === 'visible') void refetchStoreData()
-      }, 4000)
     }
 
     void subscribe()
@@ -158,7 +190,6 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
 
     return () => {
       cancelled = true
-      if (pollTimer) clearInterval(pollTimer)
       authSub.unsubscribe()
       if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
       if (storeChannel) void supabase.removeChannel(storeChannel)

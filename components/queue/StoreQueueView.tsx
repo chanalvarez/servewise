@@ -159,9 +159,21 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
     setError(null)
 
     try {
-      // Call the RPC directly from the browser — no Vercel serverless hop,
-      // no cold-start delay, no response-lost-in-transit issue.
       const supabase = createClient()
+
+      // Guarantee a session exists before calling the RPC.
+      // On PC browsers the anonymous sign-in may still be in-flight when the
+      // user clicks Join (the 4-second safety timer unblocked the button early).
+      // Without a session auth.uid() is null and the RPC silently hangs.
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        const { error: signInError } = await supabase.auth.signInAnonymously()
+        if (signInError) {
+          setError('Unable to join. Please refresh and try again.')
+          return
+        }
+      }
+
       const { error } = await supabase.rpc('join_queue', { p_store_id: store.id })
 
       if (error) {
