@@ -153,11 +153,20 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
     setJoining(true)
     setError(null)
     try {
-      await joinQueue(store.id)
+      const result = await joinQueue(store.id)
+      if (result.error) {
+        const msg = result.error.toLowerCase()
+        if (msg.includes('already in queue')) {
+          setError("You're already in the queue for this store.")
+        } else {
+          setError(result.error)
+        }
+        return
+      }
       await refreshTickets()
       setDrawerOpen(true)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to join queue')
+    } catch {
+      setError('Something went wrong. Please try again.')
     } finally {
       setJoining(false)
     }

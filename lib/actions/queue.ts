@@ -3,16 +3,20 @@
 import { createClient } from '@/lib/supabase/server'
 import type { VibeStatus } from '@/types'
 
-/** Customer: atomically join a store queue via the join_queue() RPC */
-export async function joinQueue(storeId: string) {
+/** Customer: atomically join a store queue via the join_queue() RPC.
+ *  Returns { ticket } on success or { error } on failure — never throws,
+ *  so a Server Action rejection never crashes a Server Component render. */
+export async function joinQueue(
+  storeId: string
+): Promise<{ ticket: Record<string, unknown> | null; error: string | null }> {
   const supabase = await createClient()
 
   const { data, error } = await supabase.rpc('join_queue', {
     p_store_id: storeId,
   })
 
-  if (error) throw new Error(error.message)
-  return data
+  if (error) return { ticket: null, error: error.message }
+  return { ticket: data as Record<string, unknown>, error: null }
 }
 
 /** Customer: cancel their own waiting ticket via the leave_queue() RPC */
