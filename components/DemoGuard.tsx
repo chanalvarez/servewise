@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react'
 
-const FIVERR_URL = 'https://www.fiverr.com/chanalvarez'
+const CONTACT_URL = 'https://craydev.vercel.app/#contact'
 
 const BANNER_STYLE: CSSProperties = {
   background: 'rgba(0,0,0,0.85)',
@@ -83,12 +83,12 @@ export function DemoGuard({ children }: { children: ReactNode }) {
           🔍 Demo Mode — Data is simulated. This is a portfolio preview.
         </span>
         <a
-          href={FIVERR_URL}
+          href={CONTACT_URL}
           target="_blank"
           rel="noopener noreferrer"
           className="flex-shrink-0 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/25"
         >
-          View on Fiverr
+          Contact Me
         </a>
       </div>
 
@@ -112,11 +112,14 @@ export function DemoGuard({ children }: { children: ReactNode }) {
               Demo Restriction
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-white/70">
-              This action is disabled in demo mode. Contact me to see the full version.
+              This action is disabled in demo mode.
+              To protect our active clients and their data,
+              certain features are restricted in this preview.
+              Contact me for more information.
             </p>
             <div className="mt-6 flex flex-col gap-2">
               <a
-                href={FIVERR_URL}
+                href={CONTACT_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block w-full rounded-xl py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
@@ -125,7 +128,7 @@ export function DemoGuard({ children }: { children: ReactNode }) {
                   boxShadow: '0 0 20px rgba(99,102,241,0.35)',
                 }}
               >
-                Hire Me on Fiverr
+                Contact Me
               </a>
               <button
                 type="button"
