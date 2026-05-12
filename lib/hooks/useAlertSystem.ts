@@ -78,10 +78,23 @@ export function useAlertSystem(): UseAlertSystemReturn {
 
   // navigator.vibrate is undefined on iOS — wrapped so it never throws
   const safeVibrate = useCallback((pattern: number[]) => {
+    console.log('[AlertSystem] safeVibrate called, pattern:', pattern)
+    if (typeof navigator === 'undefined') {
+      console.log('[AlertSystem] navigator unavailable (SSR context)')
+      return
+    }
+    if (!navigator.vibrate) {
+      console.log('[AlertSystem] navigator.vibrate not supported on this device (iOS Safari?)')
+      return
+    }
     try {
-      navigator?.vibrate?.(pattern)
-    } catch {
-      // vibration not supported on this device
+      const result = navigator.vibrate(pattern)
+      console.log('[AlertSystem] navigator.vibrate() returned:', result)
+      if (!result) {
+        console.log('[AlertSystem] vibrate() returned false — may need user gesture or page is not visible')
+      }
+    } catch (err) {
+      console.log('[AlertSystem] navigator.vibrate() threw an error:', err)
     }
   }, [])
 
@@ -110,8 +123,8 @@ export function useAlertSystem(): UseAlertSystemReturn {
     playWithCtx((ctx) => {
       const t = ctx.currentTime
       // Ascending two-tone ding — pleasant, attention-getting
-      scheduleDing(ctx, 880, t, 0.28, 0.7)            // A5
-      scheduleDing(ctx, 1318.51, t + 0.18, 0.22, 0.9) // E6
+      scheduleDing(ctx, 880, t, 1.4, 0.7)            // A5
+      scheduleDing(ctx, 1318.51, t + 0.18, 1.2, 0.9) // E6
     })
   }, [safeVibrate, playWithCtx])
 
@@ -122,9 +135,9 @@ export function useAlertSystem(): UseAlertSystemReturn {
     playWithCtx((ctx) => {
       const t = ctx.currentTime
       // Descending three-pulse — signals urgency without being alarming
-      scheduleDing(ctx, 1046.5, t, 0.38, 0.45)        // C6
-      scheduleDing(ctx, 987.77, t + 0.2, 0.38, 0.45)  // B5
-      scheduleDing(ctx, 880, t + 0.4, 0.4, 0.85)      // A5 (resolve)
+      scheduleDing(ctx, 1046.5, t, 1.8, 0.45)        // C6
+      scheduleDing(ctx, 987.77, t + 0.2, 1.8, 0.45)  // B5
+      scheduleDing(ctx, 880, t + 0.4, 2.0, 0.85)      // A5 (resolve)
     })
   }, [safeVibrate, playWithCtx])
 
@@ -135,8 +148,8 @@ export function useAlertSystem(): UseAlertSystemReturn {
     playWithCtx((ctx) => {
       const t = ctx.currentTime
       // High-pitched rapid double-beep — most attention-grabbing
-      scheduleDing(ctx, 1567.98, t, 0.4, 0.3)         // G6
-      scheduleDing(ctx, 1567.98, t + 0.22, 0.4, 0.3)  // G6 repeat
+      scheduleDing(ctx, 1567.98, t, 2.0, 0.3)         // G6
+      scheduleDing(ctx, 1567.98, t + 0.22, 2.0, 0.3)  // G6 repeat
     })
   }, [safeVibrate, playWithCtx])
 

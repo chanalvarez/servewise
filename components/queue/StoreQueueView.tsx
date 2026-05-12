@@ -25,6 +25,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   const [tickets, setTickets] = useState<Ticket[]>(initialTickets)
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notifStatus, setNotifStatus] = useState<'idle' | 'granted' | 'denied'>('idle')
 
   const { tickets: activeTickets, isLoading: ticketsLoading, refreshTickets, setDrawerOpen } = useActiveTickets()
 
@@ -166,13 +167,17 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
       setAlertState('called')
       playCalledAlert()
       requestNotificationPermission()
+      try { localStorage.setItem('servewise_alert', JSON.stringify({ type: 'called', storeId: store.id, storeName: store.name, mallSlug: mall.slug, timestamp: Date.now() })) } catch {}
     } else if (status === 'no_show' && prev !== 'no_show') {
       setAlertState('noshow')
       playNoShowAlert()
+      try { localStorage.setItem('servewise_alert', JSON.stringify({ type: 'noshow', storeId: store.id, storeName: store.name, mallSlug: mall.slug, timestamp: Date.now() })) } catch {}
     } else if (status === 'arrived' || status === 'voided' || status === 'completed') {
       setAlertState('idle')
+      try { localStorage.removeItem('servewise_alert') } catch {}
     } else if (!status) {
       setAlertState('idle')
+      try { localStorage.removeItem('servewise_alert') } catch {}
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myTicket?.status])
@@ -219,6 +224,10 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
       // Success — immediately refresh so myTicket is set and the board updates
       await refreshTickets().catch(() => {})
       setDrawerOpen(true)
+      // Request notification permission inside the user gesture context of the join tap
+      const perm = await requestNotificationPermission()
+      if (perm === 'granted') setNotifStatus('granted')
+      else if (perm === 'denied') setNotifStatus('denied')
     } catch {
       setError('Something went wrong. Please try again.')
     } finally {
@@ -409,6 +418,22 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
                     style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}
                   >
                     {error}
+                  </div>
+                )}
+                {notifStatus === 'granted' && (
+                  <div
+                    className="rounded-xl px-4 py-3 text-sm text-emerald-400"
+                    style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)' }}
+                  >
+                    Notifications enabled — we&apos;ll alert you when your turn is near
+                  </div>
+                )}
+                {notifStatus === 'denied' && (
+                  <div
+                    className="rounded-xl px-4 py-3 text-sm text-amber-400"
+                    style={{ background: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.25)' }}
+                  >
+                    Notifications blocked — keep this page open to receive alerts
                   </div>
                 )}
                 <button

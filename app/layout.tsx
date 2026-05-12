@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import { ActiveTicketsProvider } from '@/context/ActiveTicketsContext'
 import { ActiveTicketsDrawer } from '@/components/ActiveTicketsDrawer'
+import { GlobalAlertListener } from '@/components/GlobalAlertListener'
 import { Analytics } from '@vercel/analytics/react'
 
 const inter = Inter({
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ActiveTicketsProvider>
           {children}
           <ActiveTicketsDrawer />
+          <GlobalAlertListener />
           <Analytics />
         </ActiveTicketsProvider>
       </body>
