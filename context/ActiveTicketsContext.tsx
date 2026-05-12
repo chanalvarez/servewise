@@ -30,6 +30,7 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const supabaseRef = useRef(createClient())
+  const prevTicketStatusesRef = useRef<Record<string, string>>({})
   const pathname = usePathname()
   const isStaffPage = pathname.includes('/staff')
 
@@ -159,10 +160,61 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isStaffPage) return
     const id = setInterval(() => {
-      if (document.visibilityState === 'visible') void fetchTickets()
+      if (document.visibilityState === ‘visible’) void fetchTickets()
     }, 3000)
     return () => clearInterval(id)
   }, [fetchTickets, isStaffPage])
+
+  // Detect ticket status transitions and write cross-page alerts to localStorage.
+  // Lives here (always-mounted root context) so it fires even when the customer
+  // has navigated away from the store queue page.
+  useEffect(() => {
+    if (isStaffPage) return
+
+    const prev = prevTicketStatusesRef.current
+    const isBootstrap = Object.keys(prev).length === 0
+
+    for (const ticket of tickets) {
+      const prevStatus = prev[ticket.id]
+      const currStatus = ticket.status
+
+      if (currStatus === ‘called’ && prevStatus !== ‘called’) {
+        // On first load, skip tickets that were called more than 2 minutes ago
+        if (isBootstrap && Date.now() - new Date(ticket.updated_at).getTime() > 2 * 60 * 1000) continue
+        try {
+          localStorage.setItem(‘servewise_alert’, JSON.stringify({
+            type: ‘called’,
+            storeId: ticket.store.id,
+            storeName: ticket.store.name,
+            mallSlug: ticket.store.mall.slug,
+            timestamp: Date.now(),
+          }))
+        } catch {}
+      } else if (currStatus === ‘no_show’ && prevStatus !== ‘no_show’) {
+        // On first load, skip no-show tickets triggered more than 5 minutes ago
+        const noShowAge = Date.now() - new Date(ticket.no_show_triggered_at ?? ticket.updated_at).getTime()
+        if (isBootstrap && noShowAge > 5 * 60 * 1000) continue
+        try {
+          localStorage.setItem(‘servewise_alert’, JSON.stringify({
+            type: ‘noshow’,
+            storeId: ticket.store.id,
+            storeName: ticket.store.name,
+            mallSlug: ticket.store.mall.slug,
+            timestamp: Date.now(),
+          }))
+        } catch {}
+      }
+    }
+
+    // Clear localStorage when no ticket is in an alertable state anymore
+    const hasActive = tickets.some(t => t.status === ‘called’ || t.status === ‘no_show’)
+    const hadActive = Object.values(prev).some(s => s === ‘called’ || s === ‘no_show’)
+    if (!hasActive && hadActive) {
+      try { localStorage.removeItem(‘servewise_alert’) } catch {}
+    }
+
+    prevTicketStatusesRef.current = Object.fromEntries(tickets.map(t => [t.id, t.status]))
+  }, [tickets, isStaffPage])
 
   const removeTicket = (ticketId: string) => {
     setTickets((prev) => prev.filter((t) => t.id !== ticketId))
