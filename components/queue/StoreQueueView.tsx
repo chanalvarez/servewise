@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Loader2, MapPin, LogIn, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
@@ -10,6 +10,9 @@ import { NowServingBoard } from './NowServingBoard'
 import { NoShowCountdown } from './NoShowCountdown'
 import { VibeStatusBadge } from '@/components/store/VibeStatusBadge'
 import type { Mall, Store, Ticket } from '@/types'
+import { AlertDisplay } from '@/components/AlertDisplay'
+import type { AlertState } from '@/components/AlertDisplay'
+import { useAlertSystem } from '@/lib/hooks/useAlertSystem'
 
 interface StoreQueueViewProps {
   store: Store
@@ -24,6 +27,12 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   const [error, setError] = useState<string | null>(null)
 
   const { tickets: activeTickets, isLoading: ticketsLoading, refreshTickets, setDrawerOpen } = useActiveTickets()
+
+  const { playCalledAlert, playNoShowAlert, playUrgentAlert, requestNotificationPermission, unlockAudio } = useAlertSystem()
+
+  const [alertState, setAlertState] = useState<AlertState>('idle')
+  const [calledAt, setCalledAt] = useState<string | null>(null)
+  const prevStatusRef = useRef<string | undefined>(undefined)
 
   // My ticket for this store (from global context)
   const myTicket = activeTickets.find((t) => t.store.id === store.id)
@@ -146,6 +155,28 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
     }
   }, [store.id])
 
+  // Watch myTicket status transitions and fire alerts + haptic feedback
+  useEffect(() => {
+    const status = myTicket?.status
+    const prev   = prevStatusRef.current
+    prevStatusRef.current = status
+
+    if (status === 'called' && prev !== 'called') {
+      setCalledAt(new Date().toISOString())
+      setAlertState('called')
+      playCalledAlert()
+      requestNotificationPermission()
+    } else if (status === 'no_show' && prev !== 'no_show') {
+      setAlertState('noshow')
+      playNoShowAlert()
+    } else if (status === 'arrived' || status === 'voided' || status === 'completed') {
+      setAlertState('idle')
+    } else if (!status) {
+      setAlertState('idle')
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myTicket?.status])
+
   const handleJoin = async () => {
     // If we already have a ticket for this store, just open the drawer.
     if (myTicket) {
@@ -215,6 +246,15 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
 
   return (
     <main className="min-h-screen pb-32" style={{ background: 'radial-gradient(ellipse at 20% 20%, rgba(99,102,241,0.15) 0%, transparent 55%), #07091A', backgroundAttachment: 'fixed' }}>
+      <AlertDisplay
+        alertState={alertState}
+        calledAt={calledAt}
+        noShowAt={myTicket?.no_show_triggered_at ?? null}
+        onCalledExpired={() => setAlertState('noshow')}
+        onNoShowExpired={() => setAlertState('removed')}
+        onTwoMinWarning={playUrgentAlert}
+        onThirtySecWarning={playUrgentAlert}
+      />
       {/* Sticky header */}
       <div className="glass-dark sticky top-0 z-10">
         <div className="mx-auto max-w-2xl px-4 py-4">
@@ -373,6 +413,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
                 )}
                 <button
                   onClick={handleJoin}
+                  onPointerDown={unlockAudio}
                   disabled={joining}
                   className="flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-lg font-semibold text-white transition-all hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
                   style={{
