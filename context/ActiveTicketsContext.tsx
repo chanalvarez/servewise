@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import {
   createContext,
@@ -156,11 +156,11 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
     }
   }, [fetchTickets])
 
-  // Fallback when Realtime events don’t arrive (same RLS/socket issue as staff)
+  // Fallback when Realtime events don't arrive (same RLS/socket issue as staff)
   useEffect(() => {
     if (isStaffPage) return
     const id = setInterval(() => {
-      if (document.visibilityState === ‘visible’) void fetchTickets()
+      if (document.visibilityState === 'visible') void fetchTickets()
     }, 3000)
     return () => clearInterval(id)
   }, [fetchTickets, isStaffPage])
@@ -178,25 +178,25 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
       const prevStatus = prev[ticket.id]
       const currStatus = ticket.status
 
-      if (currStatus === ‘called’ && prevStatus !== ‘called’) {
+      if (currStatus === 'called' && prevStatus !== 'called') {
         // On first load, skip tickets that were called more than 2 minutes ago
         if (isBootstrap && Date.now() - new Date(ticket.updated_at).getTime() > 2 * 60 * 1000) continue
         try {
-          localStorage.setItem(‘servewise_alert’, JSON.stringify({
-            type: ‘called’,
+          localStorage.setItem('servewise_alert', JSON.stringify({
+            type: 'called',
             storeId: ticket.store.id,
             storeName: ticket.store.name,
             mallSlug: ticket.store.mall.slug,
             timestamp: Date.now(),
           }))
         } catch {}
-      } else if (currStatus === ‘no_show’ && prevStatus !== ‘no_show’) {
+      } else if (currStatus === 'no_show' && prevStatus !== 'no_show') {
         // On first load, skip no-show tickets triggered more than 5 minutes ago
         const noShowAge = Date.now() - new Date(ticket.no_show_triggered_at ?? ticket.updated_at).getTime()
         if (isBootstrap && noShowAge > 5 * 60 * 1000) continue
         try {
-          localStorage.setItem(‘servewise_alert’, JSON.stringify({
-            type: ‘noshow’,
+          localStorage.setItem('servewise_alert', JSON.stringify({
+            type: 'noshow',
             storeId: ticket.store.id,
             storeName: ticket.store.name,
             mallSlug: ticket.store.mall.slug,
@@ -207,10 +207,10 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
     }
 
     // Clear localStorage when no ticket is in an alertable state anymore
-    const hasActive = tickets.some(t => t.status === ‘called’ || t.status === ‘no_show’)
-    const hadActive = Object.values(prev).some(s => s === ‘called’ || s === ‘no_show’)
+    const hasActive = tickets.some(t => t.status === 'called' || t.status === 'no_show')
+    const hadActive = Object.values(prev).some(s => s === 'called' || s === 'no_show')
     if (!hasActive && hadActive) {
-      try { localStorage.removeItem(‘servewise_alert’) } catch {}
+      try { localStorage.removeItem('servewise_alert') } catch {}
     }
 
     prevTicketStatusesRef.current = Object.fromEntries(tickets.map(t => [t.id, t.status]))
