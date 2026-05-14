@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
-import { createClient } from '@/lib/supabase/server'
+import { getMall, getStores } from '@/lib/queries'
 import { StoreDirectory } from '@/components/store/StoreDirectory'
 
 interface Props {
@@ -9,14 +9,7 @@ interface Props {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { mallSlug } = await params
-  const supabase = await createClient()
-
-  const { data: mall } = await supabase
-    .from('malls')
-    .select('name, city')
-    .eq('slug', mallSlug)
-    .single()
-
+  const mall = await getMall(mallSlug)
   return {
     title: mall ? `${mall.name} — ServeWise` : 'Mall — ServeWise',
     description: mall
@@ -27,21 +20,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function MallPage({ params }: Props) {
   const { mallSlug } = await params
-  const supabase = await createClient()
-
-  const { data: mall } = await supabase
-    .from('malls')
-    .select('*')
-    .eq('slug', mallSlug)
-    .single()
-
+  const mall = await getMall(mallSlug)
   if (!mall) notFound()
 
-  const { data: stores } = await supabase
-    .from('stores')
-    .select('*')
-    .eq('mall_id', mall.id)
-    .order('name')
+  const stores = await getStores(mall.id)
 
-  return <StoreDirectory mall={mall} initialStores={stores ?? []} />
+  return <StoreDirectory mall={mall} initialStores={stores} />
 }

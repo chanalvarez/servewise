@@ -4,6 +4,7 @@ import './globals.css'
 import { ActiveTicketsProvider } from '@/context/ActiveTicketsContext'
 import { ActiveTicketsDrawer } from '@/components/ActiveTicketsDrawer'
 import { GlobalAlertListener } from '@/components/GlobalAlertListener'
+import { NavigationProgress } from '@/components/NavigationProgress'
 import { Analytics } from '@vercel/analytics/react'
 
 const inter = Inter({
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={inter.variable}>
         <body className="font-sans" suppressHydrationWarning>
         <ActiveTicketsProvider>
+          <NavigationProgress />
           {children}
           <ActiveTicketsDrawer />
           <GlobalAlertListener />

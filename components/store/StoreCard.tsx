@@ -1,3 +1,7 @@
+'use client'
+
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Users } from 'lucide-react'
 import type { Store } from '@/types'
@@ -64,6 +68,10 @@ interface StoreCardProps {
 }
 
 export function StoreCard({ store, mallSlug }: StoreCardProps) {
+  const router = useRouter()
+  const [tapped, setTapped] = useState(false)
+
+  const href = `/${mallSlug}/${store.id}`
   const waitingCount = Math.max(0, store.last_queue_number - store.current_serving)
   const avatarBg = store.category ? (CATEGORY_BG[store.category] ?? 'rgba(71,85,105,0.5)') : 'rgba(71,85,105,0.5)'
   const avatarBorder = store.category ? (CATEGORY_BORDER[store.category] ?? 'rgba(148,163,184,0.2)') : 'rgba(148,163,184,0.2)'
@@ -71,8 +79,14 @@ export function StoreCard({ store, mallSlug }: StoreCardProps) {
 
   return (
     <Link
-      href={`/${mallSlug}/${store.id}`}
-      className="group flex items-center gap-3.5 rounded-2xl p-4 transition-all duration-250 hover:scale-[1.015]"
+      href={href}
+      onClick={() => {
+        setTapped(true)
+        window.dispatchEvent(new CustomEvent('sw:nav-start'))
+      }}
+      onMouseEnter={() => router.prefetch(href)}
+      onTouchStart={() => router.prefetch(href)}
+      className="group relative flex items-center gap-3.5 rounded-2xl p-4 transition-all duration-250 hover:scale-[1.015]"
       style={{
         background: 'rgba(255,255,255,0.04)',
         backdropFilter: 'blur(20px)',
@@ -151,6 +165,16 @@ export function StoreCard({ store, mallSlug }: StoreCardProps) {
           )}
         </div>
       </div>
+
+      {/* Click overlay */}
+      {tapped && (
+        <div
+          className="absolute inset-0 flex items-center justify-center rounded-2xl"
+          style={{ background: 'rgba(7,9,26,0.5)' }}
+        >
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+        </div>
+      )}
     </Link>
   )
 }

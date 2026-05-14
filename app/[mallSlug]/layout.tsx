@@ -1,5 +1,5 @@
-import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
+import { getMall } from '@/lib/queries'
 
 export default async function MallLayout({
   children,
@@ -9,15 +9,7 @@ export default async function MallLayout({
   params: Promise<{ mallSlug: string }>
 }) {
   const { mallSlug } = await params
-  const supabase = await createClient()
-
-  const { data: mall } = await supabase
-    .from('malls')
-    .select('id')
-    .eq('slug', mallSlug)
-    .single()
-
+  const mall = await getMall(mallSlug)
   if (!mall) notFound()
-
   return <>{children}</>
 }

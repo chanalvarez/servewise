@@ -1,11 +1,9 @@
-import Link from 'next/link'
-import { ChevronRight, Layers, MapPin } from 'lucide-react'
-import { createClient } from '@/lib/supabase/server'
-import type { Mall } from '@/types'
+import { Layers } from 'lucide-react'
+import { getMalls } from '@/lib/queries'
+import { MallCardList } from '@/components/mall/MallCardList'
 
 export default async function HomePage() {
-  const supabase = await createClient()
-  const { data: malls } = await supabase.from('malls').select('*').order('name')
+  const malls = await getMalls()
 
   return (
     <main
@@ -71,59 +69,17 @@ export default async function HomePage() {
           </div>
         </div>
 
-        {/* Mall list — takes all remaining height; cards stretch to fill it evenly */}
+        {/* Mall list — takes all remaining height */}
         <div className="flex min-h-0 flex-1 flex-col pb-5">
           <div className="mb-2 flex items-center justify-between">
             <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
               Select a mall
             </p>
-            <span className="text-[10px] text-white/20">{malls?.length ?? 0} locations</span>
+            <span className="text-[10px] text-white/20">{malls.length} locations</span>
           </div>
 
-          {/*
-            Mobile  (<768px): cards use flex-1 so they stretch to fill all remaining
-                               viewport height — no empty space, no scrolling.
-            Tablet/Desktop (≥768px): cards are flex-none with a fixed height so they
-                               look compact and proportional on large screens.
-          */}
           <div className="flex flex-1 flex-col gap-2">
-            {malls?.map((mall: Mall) => (
-              <Link
-                key={mall.id}
-                href={`/${mall.slug}`}
-                className="group flex flex-1 items-center gap-4 rounded-2xl px-4 py-3 transition-all duration-300 hover:border-indigo-500/30 md:h-[72px] md:flex-none"
-                style={{
-                  background: 'rgba(255,255,255,0.05)',
-                  backdropFilter: 'blur(20px)',
-                  WebkitBackdropFilter: 'blur(20px)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                }}
-              >
-                <div
-                  className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl"
-                  style={{
-                    background: 'linear-gradient(135deg, rgba(99,102,241,0.3), rgba(139,92,246,0.3))',
-                    border: '1px solid rgba(99,102,241,0.3)',
-                  }}
-                >
-                  <MapPin className="h-4 w-4 text-indigo-300" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-white">{mall.name}</p>
-                  {mall.address && (
-                    <p className="mt-0.5 truncate text-xs text-white/40">{mall.address}</p>
-                  )}
-                </div>
-                <ChevronRight className="h-4 w-4 flex-shrink-0 text-white/20 transition-all duration-200 group-hover:translate-x-0.5 group-hover:text-indigo-400" />
-              </Link>
-            ))}
-
-            {(!malls || malls.length === 0) && (
-              <div className="flex flex-1 flex-col items-center justify-center text-center text-white/30">
-                <p className="font-medium">No malls configured yet</p>
-                <p className="mt-1 text-sm">Run the seed SQL to add sample data</p>
-              </div>
-            )}
+            <MallCardList malls={malls} />
           </div>
 
           <p className="pt-3 text-center text-[10px] text-white/15">
