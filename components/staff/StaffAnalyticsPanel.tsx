@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import {
   BarChart,
   Bar,
@@ -36,44 +37,79 @@ interface StaffAnalyticsPanelProps {
 }
 
 export function StaffAnalyticsPanel({ storeId }: StaffAnalyticsPanelProps) {
-  const [range, setRange]     = useState<Range>('7d')
-  const [view, setView]       = useState<View>('hour')
-  const [loading, setLoading] = useState(true)
-  const [hourData, setHourData] = useState<ChartRow[]>([])
-  const [dayData,  setDayData]  = useState<ChartRow[]>([])
+  const [range, setRange]         = useState<Range>('7d')
+  const [view, setView]           = useState<View>('hour')
+  const [isLoading, setIsLoading] = useState(false)      // first-ever fetch in progress
+  const [isRefreshing, setIsRefreshing] = useState(false) // background re-fetch
+  const [error, setError]         = useState<string | null>(null)
+  const [hourData, setHourData]   = useState<ChartRow[]>([])
+  const [dayData,  setDayData]    = useState<ChartRow[]>([])
+
+  // hasLoadedRef: true once any fetch completes successfully.
+  // Using a ref (not state) so it doesn't trigger a re-render and doesn't
+  // become a stale closure value inside useCallback.
+  const hasLoadedRef = useRef(false)
+
+  // fetchIdRef: incremented at the start of every fetch. Checked before
+  // applying results so stale responses from cancelled fetches are discarded.
+  const fetchIdRef = useRef(0)
 
   const fetchData = useCallback(async () => {
-    setLoading(true)
-    const supabase = createClient()
+    const id = ++fetchIdRef.current
 
-    let query = supabase
-      .from('tickets')
-      .select('created_at')
-      .eq('store_id', storeId)
-
-    if (range !== 'all') {
-      const days  = range === '7d' ? 7 : 30
-      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-      query = query.gte('created_at', since)
+    // First load → full skeleton. Subsequent fetches → keep chart, spin button.
+    if (hasLoadedRef.current) {
+      setIsRefreshing(true)
+    } else {
+      setIsLoading(true)
     }
+    setError(null)
 
-    const { data } = await query
-    setLoading(false)
-    if (!data) return
+    try {
+      const supabase = createClient()
+      let query = supabase
+        .from('tickets')
+        .select('created_at')
+        .eq('store_id', storeId)
 
-    const hours = new Array(24).fill(0)
-    const days  = new Array(7).fill(0)
+      if (range !== 'all') {
+        const days  = range === '7d' ? 7 : 30
+        const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+        query = query.gte('created_at', since)
+      }
 
-    for (const { created_at } of data) {
-      const d = new Date(created_at)
-      hours[d.getHours()]++
-      days[d.getDay()]++
+      const { data, error: queryError } = await query
+      if (queryError) throw queryError
+
+      // Discard results if a newer fetch has since been started
+      if (id !== fetchIdRef.current) return
+
+      const hours = new Array(24).fill(0) as number[]
+      const days  = new Array(7).fill(0)  as number[]
+
+      for (const { created_at } of data ?? []) {
+        const d = new Date(created_at)
+        hours[d.getHours()]++
+        days[d.getDay()]++
+      }
+
+      setHourData(HOUR_LABELS.map((label, i) => ({ label, count: hours[i] })))
+      setDayData(DAY_LABELS.map((label, i) => ({ label, count: days[i] })))
+      hasLoadedRef.current = true
+    } catch {
+      if (id !== fetchIdRef.current) return
+      setError('Failed to load data.')
+    } finally {
+      // Only reset loading flags for the most recent fetch
+      if (id === fetchIdRef.current) {
+        setIsLoading(false)
+        setIsRefreshing(false)
+      }
     }
-
-    setHourData(HOUR_LABELS.map((label, i) => ({ label, count: hours[i] })))
-    setDayData(DAY_LABELS.map((label, i) => ({ label, count: days[i] })))
   }, [storeId, range])
 
+  // Fires on mount (initial load) and when range changes (background refresh).
+  // Never fires from queue events — this component is isolated from Realtime.
   useEffect(() => { void fetchData() }, [fetchData])
 
   const chartData = view === 'hour' ? hourData : dayData
@@ -83,22 +119,37 @@ export function StaffAnalyticsPanel({ storeId }: StaffAnalyticsPanelProps) {
   return (
     <div className="space-y-3">
 
-      {/* Date range pills */}
-      <div className="flex gap-2">
-        {(['7d', '30d', 'all'] as Range[]).map((r) => (
-          <button
-            key={r}
-            onClick={() => setRange(r)}
-            className={`rounded-xl px-3 py-1.5 text-sm font-medium transition-colors ${
-              range === r
-                ? 'bg-indigo-600 text-white'
-                : 'text-white/40 hover:text-white/70'
-            }`}
-            style={range !== r ? { background: 'rgba(255,255,255,0.05)' } : undefined}
-          >
-            {r === '7d' ? 'Last 7 days' : r === '30d' ? 'Last 30 days' : 'All time'}
-          </button>
-        ))}
+      {/* Date range pills + manual refresh button */}
+      <div className="flex items-center gap-2">
+        <div className="flex flex-1 flex-wrap gap-2">
+          {(['7d', '30d', 'all'] as Range[]).map((r) => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              className={`rounded-xl px-3 py-1.5 text-sm font-medium transition-colors ${
+                range === r
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-white/40 hover:text-white/70'
+              }`}
+              style={range !== r ? { background: 'rgba(255,255,255,0.05)' } : undefined}
+            >
+              {r === '7d' ? 'Last 7 days' : r === '30d' ? 'Last 30 days' : 'All time'}
+            </button>
+          ))}
+        </div>
+
+        {/* Refresh button — spins during background refresh; no full-page blanking */}
+        <button
+          onClick={() => void fetchData()}
+          disabled={isLoading || isRefreshing}
+          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full transition-colors hover:bg-white/8 disabled:opacity-40"
+          title="Refresh"
+          aria-label="Refresh analytics"
+        >
+          <RefreshCw
+            className={`h-3.5 w-3.5 text-white/35 ${isRefreshing ? 'animate-spin' : ''}`}
+          />
+        </button>
       </div>
 
       {/* View toggle */}
@@ -119,14 +170,34 @@ export function StaffAnalyticsPanel({ storeId }: StaffAnalyticsPanelProps) {
         ))}
       </div>
 
+      {/* Subtle error banner — only shown when there is existing data to keep visible */}
+      {error && hasLoadedRef.current && (
+        <p className="text-right text-xs text-red-400/70">
+          Refresh failed — showing previous data
+        </p>
+      )}
+
       {/* Chart card */}
       <div
         className="rounded-2xl p-4"
         style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
       >
-        {loading ? (
+        {isLoading ? (
+          // First-load skeleton
           <div className="flex h-52 items-center justify-center">
             <p className="text-sm text-white/30">Loading…</p>
+          </div>
+        ) : error && !hasLoadedRef.current ? (
+          // Error on first load — no existing data to fall back on
+          <div className="flex h-52 flex-col items-center justify-center gap-3">
+            <p className="text-sm text-white/40">{error}</p>
+            <button
+              onClick={() => void fetchData()}
+              className="rounded-xl px-4 py-2 text-sm font-medium text-indigo-400 transition-colors hover:text-indigo-300"
+              style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }}
+            >
+              Retry
+            </button>
           </div>
         ) : total === 0 ? (
           <div className="flex h-52 items-center justify-center">

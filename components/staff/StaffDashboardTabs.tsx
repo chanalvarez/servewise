@@ -28,6 +28,18 @@ export function StaffDashboardTabs({
 }: StaffDashboardTabsProps) {
   const [tab, setTab] = useState<Tab>('queue')
 
+  // Analytics and Feedback are mounted the first time their tab is clicked,
+  // then kept alive in the DOM (hidden with CSS) so they never re-fetch on
+  // subsequent tab switches. Queue is allowed to unmount normally.
+  const [analyticsEverShown, setAnalyticsEverShown] = useState(false)
+  const [feedbackEverShown,  setFeedbackEverShown]  = useState(false)
+
+  const handleTabChange = (next: Tab) => {
+    setTab(next)
+    if (next === 'analytics') setAnalyticsEverShown(true)
+    if (next === 'feedback')  setFeedbackEverShown(true)
+  }
+
   return (
     <div className="space-y-4">
       {/* Tab bar */}
@@ -38,7 +50,7 @@ export function StaffDashboardTabs({
         {TABS.map(({ key, label, Icon }) => (
           <button
             key={key}
-            onClick={() => setTab(key)}
+            onClick={() => handleTabChange(key)}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-semibold transition-colors ${
               tab === key ? 'bg-indigo-600 text-white' : 'text-white/50 hover:text-white/80'
             }`}
@@ -49,6 +61,7 @@ export function StaffDashboardTabs({
         ))}
       </div>
 
+      {/* Queue — conditionally rendered; real-time subscriptions live here */}
       {tab === 'queue' && (
         <StaffQueuePanel
           storeId={storeId}
@@ -57,12 +70,20 @@ export function StaffDashboardTabs({
         />
       )}
 
-      {tab === 'analytics' && (
-        <StaffAnalyticsPanel storeId={storeId} />
+      {/* Analytics — mounted once on first click, then kept alive with CSS.
+          This prevents the component from unmounting/remounting on tab switch,
+          which was the sole cause of the "stuck loading" bug. */}
+      {analyticsEverShown && (
+        <div className={tab === 'analytics' ? '' : 'hidden'}>
+          <StaffAnalyticsPanel storeId={storeId} />
+        </div>
       )}
 
-      {tab === 'feedback' && (
-        <StaffFeedbackPanel storeId={storeId} />
+      {/* Feedback — same mount-once pattern */}
+      {feedbackEverShown && (
+        <div className={tab === 'feedback' ? '' : 'hidden'}>
+          <StaffFeedbackPanel storeId={storeId} />
+        </div>
       )}
     </div>
   )
