@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, Star } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
+import { supabaseQuery } from '@/lib/supabase/clients'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -68,14 +68,18 @@ export function StaffFeedbackPanel({ storeId, activated }: StaffFeedbackPanelPro
     setError(null)
 
     try {
-      const supabase = createClient()
       console.log('[FEEDBACK] About to fetch, storeId:', storeId)
-      const { data, error: queryError } = await supabase
-        .from('ratings')
-        .select('id, stars, message, submitted_at')
-        .eq('store_id', storeId)
-        .order('submitted_at', { ascending: false })
-
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error: queryError } = await Promise.race<any>([
+        supabaseQuery
+          .from('ratings')
+          .select('id, stars, message, submitted_at')
+          .eq('store_id', storeId)
+          .order('submitted_at', { ascending: false }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Query timed out')), 8000)
+        ),
+      ])
       console.log('[FEEDBACK] Supabase response:', data, queryError)
       if (queryError) throw queryError
       if (id !== fetchIdRef.current) return

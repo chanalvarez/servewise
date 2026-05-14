@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { supabaseRealtime } from '@/lib/supabase/clients'
 import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
 import { callNext, markNoShow, markArrived, markServed } from '@/lib/actions/queue'
 import { NoShowCountdown } from '@/components/queue/NoShowCountdown'
@@ -72,7 +73,7 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
 
   // ── Realtime subscription (best-effort on top of polling) ────────────────
   useEffect(() => {
-    const supabase = createClient()
+    const supabase = supabaseRealtime
     let cancelled = false
     let ticketsChannel: ReturnType<typeof supabase.channel> | null = null
     let storeChannel: ReturnType<typeof supabase.channel> | null = null
@@ -138,7 +139,9 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
             }
           }
         )
-        .subscribe(async (status) => {
+        .subscribe(async (status, err) => {
+          console.log('[REALTIME] tickets subscription status:', status)
+          if (err) console.error('[REALTIME] tickets subscription error:', err)
           if (status === 'SUBSCRIBED') void refetchStoreData()
         })
 
@@ -155,7 +158,10 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
             })
           }
         )
-        .subscribe()
+        .subscribe((status, err) => {
+          console.log('[REALTIME] store subscription status:', status)
+          if (err) console.error('[REALTIME] store subscription error:', err)
+        })
 
       if (cancelled) {
         if (ticketsChannel) void supabase.removeChannel(ticketsChannel)

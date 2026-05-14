@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
   Cell,
 } from 'recharts'
-import { createClient } from '@/lib/supabase/client'
+import { supabaseQuery } from '@/lib/supabase/clients'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -67,9 +67,8 @@ export function StaffAnalyticsPanel({ storeId, activated }: StaffAnalyticsPanelP
     setError(null)
 
     try {
-      const supabase = createClient()
       console.log('[ANALYTICS] About to fetch, storeId:', storeId, 'range:', range)
-      let query = supabase
+      let query = supabaseQuery
         .from('tickets')
         .select('created_at')
         .eq('store_id', storeId)
@@ -80,7 +79,13 @@ export function StaffAnalyticsPanel({ storeId, activated }: StaffAnalyticsPanelP
         query = query.gte('created_at', since)
       }
 
-      const { data, error: queryError } = await query
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error: queryError } = await Promise.race<any>([
+        query,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Query timed out')), 8000)
+        ),
+      ])
       console.log('[ANALYTICS] Supabase response:', data, queryError)
       if (queryError) throw queryError
 
