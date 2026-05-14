@@ -33,6 +33,7 @@ export interface Store {
   last_queue_number: number
   is_open: boolean
   is_cutoff: boolean
+  ewt_minutes: number | null
   created_at: string
 }
 
@@ -43,6 +44,9 @@ export interface Ticket {
   queue_number: number
   status: TicketStatus
   no_show_triggered_at: string | null
+  called_at: string | null
+  arrived_at: string | null
+  served_at: string | null
   created_at: string
   updated_at: string
 }

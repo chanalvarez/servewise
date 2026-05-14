@@ -4,16 +4,16 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
-import { callNext, markNoShow, markArrived } from '@/lib/actions/queue'
+import { callNext, markNoShow, markArrived, markServed } from '@/lib/actions/queue'
 import { NoShowCountdown } from '@/components/queue/NoShowCountdown'
-import { SkipForward, AlertTriangle, CheckCircle, Users } from 'lucide-react'
+import { SkipForward, AlertTriangle, CheckCircle, CheckCircle2, Users } from 'lucide-react'
 import type { Store, Ticket } from '@/types'
 
 const STATUS_LABEL: Record<string, string> = {
   waiting: 'Waiting',
   called: 'Called',
   no_show: 'No Show',
-  arrived: 'Arrived',
+  arrived: 'Arrived — at counter',
   voided: 'Voided',
   completed: 'Done',
 }
@@ -195,7 +195,7 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
   }
 
   const activeTickets = tickets.filter((t) =>
-    ['waiting', 'called', 'no_show'].includes(t.status)
+    ['waiting', 'called', 'no_show', 'arrived'].includes(t.status)
   )
   const waitingCount = tickets.filter((t) => t.status === 'waiting').length
 
@@ -249,8 +249,9 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
       ) : (
         <div className="space-y-2">
           {activeTickets.map((ticket) => {
-            const isCalled = ticket.status === 'called'
-            const isNoShow = ticket.status === 'no_show'
+            const isCalled  = ticket.status === 'called'
+            const isNoShow  = ticket.status === 'no_show'
+            const isArrived = ticket.status === 'arrived'
 
             return (
               <div
@@ -260,6 +261,8 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
                     ? 'border-emerald-200 bg-emerald-50/60'
                     : isNoShow
                     ? 'border-red-100 bg-red-50/60'
+                    : isArrived
+                    ? 'border-indigo-200 bg-indigo-50/60'
                     : 'border-gray-100 bg-white'
                 }`}
               >
@@ -275,6 +278,8 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
                           ? 'bg-emerald-100 text-emerald-700'
                           : isNoShow
                           ? 'bg-red-100 text-red-700'
+                          : isArrived
+                          ? 'bg-indigo-100 text-indigo-700'
                           : 'bg-gray-100 text-gray-500'
                       }`}
                     >
@@ -318,6 +323,18 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
                       >
                         <CheckCircle className="h-4 w-4" />
                         Mark Arrived
+                      </button>
+                    )}
+                    {isArrived && (
+                      <button
+                        onClick={() =>
+                          act(`${ticket.id}_served`, () => markServed(ticket.id))
+                        }
+                        disabled={loading === `${ticket.id}_served`}
+                        className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-100 px-3 py-1.5 text-sm font-semibold text-indigo-700 transition-colors hover:bg-indigo-200 disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Served
                       </button>
                     )}
                   </div>

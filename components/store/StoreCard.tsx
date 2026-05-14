@@ -108,6 +108,16 @@ export function StoreCard({ store, mallSlug }: StoreCardProps) {
           <span className="tabular-nums font-medium text-white/60">
             #{store.current_serving === 0 ? '—' : store.current_serving} serving
           </span>
+          {store.is_open && (
+            <>
+              <span className="text-white/20">·</span>
+              {store.ewt_minutes != null && store.ewt_minutes > 0 ? (
+                <span className="text-white/50">~{store.ewt_minutes} min wait</span>
+              ) : (
+                <span className="text-white/25">Estimating...</span>
+              )}
+            </>
+          )}
           {waitingCount > 0 && (
             <>
               <span className="text-white/20">·</span>

@@ -37,7 +37,7 @@ export async function GET(request: Request) {
       .from('tickets')
       .select('*')
       .eq('store_id', storeId)
-      .in('status', ['waiting', 'called', 'no_show'])
+      .in('status', ['waiting', 'called', 'no_show', 'arrived'])
       .order('queue_number'),
     supabase
       .from('stores')

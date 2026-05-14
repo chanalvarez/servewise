@@ -13,6 +13,7 @@ import type { Mall, Store, Ticket } from '@/types'
 import { AlertDisplay } from '@/components/AlertDisplay'
 import type { AlertState } from '@/components/AlertDisplay'
 import { useAlertSystem } from '@/lib/hooks/useAlertSystem'
+import { RatingOverlay } from './RatingOverlay'
 
 interface StoreQueueViewProps {
   store: Store
@@ -34,6 +35,13 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   const [alertState, setAlertState] = useState<AlertState>('idle')
   const [calledAt, setCalledAt] = useState<string | null>(null)
   const prevStatusRef = useRef<string | undefined>(undefined)
+
+  const [showRating, setShowRating] = useState(false)
+  // Keeps the last known ticket id so the overlay can submit after the ticket disappears
+  const lastTicketIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (myTicket?.id) lastTicketIdRef.current = myTicket.id
+  }, [myTicket?.id])
 
   // My ticket for this store (from global context)
   const myTicket = activeTickets.find((t) => t.store.id === store.id)
@@ -178,6 +186,8 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
     } else if (!status) {
       setAlertState('idle')
       try { localStorage.removeItem('servewise_alert') } catch {}
+      // Ticket was removed after being 'arrived' → staff clicked Served
+      if (prev === 'arrived') setShowRating(true)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myTicket?.status])
@@ -242,6 +252,8 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
         return "It's your turn! Please head to the counter."
       case 'no_show':
         return 'You were called but not present. Arrive before the countdown ends.'
+      case 'arrived':
+        return "You're being served — stay at the counter."
       case 'waiting': {
         const ahead = Math.max(0, myTicket.queue_number - store.current_serving - 1)
         return ahead === 0
@@ -264,6 +276,14 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
         onTwoMinWarning={playUrgentAlert}
         onThirtySecWarning={playUrgentAlert}
       />
+
+      {showRating && lastTicketIdRef.current && (
+        <RatingOverlay
+          ticketId={lastTicketIdRef.current}
+          storeId={store.id}
+          onDone={() => setShowRating(false)}
+        />
+      )}
       {/* Sticky header */}
       <div className="glass-dark sticky top-0 z-10">
         <div className="mx-auto max-w-2xl px-4 py-4">
@@ -346,6 +366,8 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
                 ? { background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }
                 : myTicket.status === 'no_show'
                 ? { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)' }
+                : myTicket.status === 'arrived'
+                ? { background: 'rgba(99,102,241,0.13)', border: '1px solid rgba(99,102,241,0.35)' }
                 : { background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }
             }
           >
@@ -355,6 +377,8 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
                   ? 'text-emerald-400'
                   : myTicket.status === 'no_show'
                   ? 'text-red-400'
+                  : myTicket.status === 'arrived'
+                  ? 'text-indigo-300'
                   : 'text-indigo-300'
               }`}
             >

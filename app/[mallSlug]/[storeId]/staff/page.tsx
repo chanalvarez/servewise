@@ -2,7 +2,7 @@ import { redirect, notFound } from 'next/navigation'
 import { ArrowLeft, Store } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { StaffQueuePanel } from '@/components/staff/StaffQueuePanel'
+import { StaffDashboardTabs } from '@/components/staff/StaffDashboardTabs'
 import { VibeToggle } from '@/components/staff/VibeToggle'
 import { CutoffButton } from '@/components/staff/CutoffButton'
 import { StaffSignOutButton } from './StaffSignOutButton'
@@ -45,7 +45,7 @@ export default async function StaffDashboardPage({ params }: Props) {
       .from('tickets')
       .select('*')
       .eq('store_id', storeId)
-      .in('status', ['waiting', 'called', 'no_show'])
+      .in('status', ['waiting', 'called', 'no_show', 'arrived'])
       .order('queue_number'),
   ])
 
@@ -86,9 +86,9 @@ export default async function StaffDashboardPage({ params }: Props) {
         <CutoffButton storeId={store.id} initialIsCutoff={store.is_cutoff} />
       </div>
 
-      {/* Queue management */}
+      {/* Queue management + Analytics tabs */}
       <div className="mx-auto max-w-2xl px-4 py-4">
-        <StaffQueuePanel
+        <StaffDashboardTabs
           storeId={store.id}
           initialTickets={tickets ?? []}
           initialStore={{ current_serving: store.current_serving, last_queue_number: store.last_queue_number }}

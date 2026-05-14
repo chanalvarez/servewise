@@ -60,7 +60,7 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
         `
         )
         .eq('customer_id', user.id)
-        .in('status', ['waiting', 'called', 'no_show'])
+        .in('status', ['waiting', 'called', 'no_show', 'arrived'])
         .order('created_at', { ascending: true })
 
       if (error) console.error('Fetch tickets error:', error.message)

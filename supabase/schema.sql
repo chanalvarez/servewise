@@ -35,6 +35,7 @@ CREATE TABLE stores (
   last_queue_number INT         NOT NULL DEFAULT 0,
   is_open           BOOLEAN     NOT NULL DEFAULT true,
   is_cutoff         BOOLEAN     NOT NULL DEFAULT false,  -- staff blocks new queue entries near closing
+  ewt_minutes       INT,                                 -- rolling avg of last 3 service durations; updated by markServed
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -45,6 +46,9 @@ CREATE TABLE tickets (
   queue_number         INT          NOT NULL,
   status               ticket_status NOT NULL DEFAULT 'waiting',
   no_show_triggered_at TIMESTAMPTZ,            -- set by staff; drives the 5-min countdown
+  called_at            TIMESTAMPTZ,            -- stamped by call_next() RPC (server time)
+  arrived_at           TIMESTAMPTZ,            -- stamped by markArrived server action
+  served_at            TIMESTAMPTZ,            -- stamped by markServed server action
   created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
@@ -177,7 +181,8 @@ BEGIN
     RAISE EXCEPTION 'No waiting customers';
   END IF;
 
-  UPDATE tickets SET status = 'called'
+  -- Stamp called_at with PostgreSQL server time (no clock drift from application server)
+  UPDATE tickets SET status = 'called', called_at = NOW()
   WHERE id = v_ticket.id
   RETURNING * INTO v_ticket;
 
@@ -201,10 +206,28 @@ SELECT cron.schedule(
   $$
 );
 
+-- ── Ratings (post-service satisfaction) ──────────────────────────────────────
+
+CREATE TABLE ratings (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  queue_entry_id uuid REFERENCES tickets(id),
+  store_id       uuid REFERENCES stores(id),
+  stars          integer CHECK (stars >= 1 AND stars <= 5),
+  message        text,
+  submitted_at   timestamptz DEFAULT now()
+);
+
+ALTER TABLE ratings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "ratings_insert"     ON ratings FOR INSERT WITH CHECK (true);
+CREATE POLICY "ratings_staff_read" ON ratings FOR SELECT
+  USING (store_id IN (SELECT store_id FROM staff WHERE id = auth.uid()));
+
 -- ── Realtime Publications ──────────────────────────────────────────────────────
 
 ALTER PUBLICATION supabase_realtime ADD TABLE tickets;
 ALTER PUBLICATION supabase_realtime ADD TABLE stores;
+ALTER PUBLICATION supabase_realtime ADD TABLE ratings;
 
 -- ── Row Level Security ────────────────────────────────────────────────────────
 
