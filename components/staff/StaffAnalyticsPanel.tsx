@@ -168,7 +168,7 @@ export function StaffAnalyticsPanel({ storeId }: StaffAnalyticsPanelProps) {
                     color: '#fff',
                     fontSize: 13,
                   }}
-                  formatter={(val: number) => [val, 'Customers']}
+                  formatter={(val) => [val, 'Customers']}
                   labelStyle={{ color: 'rgba(255,255,255,0.5)', marginBottom: 2 }}
                 />
                 <Bar dataKey="count" radius={[4, 4, 0, 0]}>
