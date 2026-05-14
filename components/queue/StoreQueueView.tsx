@@ -37,14 +37,15 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   const prevStatusRef = useRef<string | undefined>(undefined)
 
   const [showRating, setShowRating] = useState(false)
-  // Keeps the last known ticket id so the overlay can submit after the ticket disappears
   const lastTicketIdRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (myTicket?.id) lastTicketIdRef.current = myTicket.id
-  }, [myTicket?.id])
 
   // My ticket for this store (from global context)
   const myTicket = activeTickets.find((t) => t.store.id === store.id)
+
+  // Keep lastTicketIdRef current so the rating overlay can submit after the ticket disappears
+  useEffect(() => {
+    if (myTicket?.id) lastTicketIdRef.current = myTicket.id
+  }, [myTicket?.id])
 
   // Total in-queue = all active ticket statuses (waiting + called + no_show).
   // Store counters (last_queue_number - current_serving) are the ground truth
