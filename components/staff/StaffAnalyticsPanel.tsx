@@ -34,9 +34,10 @@ const DAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
 
 interface StaffAnalyticsPanelProps {
   storeId: string
+  activated: boolean
 }
 
-export function StaffAnalyticsPanel({ storeId }: StaffAnalyticsPanelProps) {
+export function StaffAnalyticsPanel({ storeId, activated }: StaffAnalyticsPanelProps) {
   const [range, setRange]         = useState<Range>('7d')
   const [view, setView]           = useState<View>('hour')
   const [isLoading, setIsLoading] = useState(false)      // first-ever fetch in progress
@@ -67,6 +68,7 @@ export function StaffAnalyticsPanel({ storeId }: StaffAnalyticsPanelProps) {
 
     try {
       const supabase = createClient()
+      console.log('[ANALYTICS] About to fetch, storeId:', storeId, 'range:', range)
       let query = supabase
         .from('tickets')
         .select('created_at')
@@ -79,9 +81,9 @@ export function StaffAnalyticsPanel({ storeId }: StaffAnalyticsPanelProps) {
       }
 
       const { data, error: queryError } = await query
+      console.log('[ANALYTICS] Supabase response:', data, queryError)
       if (queryError) throw queryError
 
-      // Discard results if a newer fetch has since been started
       if (id !== fetchIdRef.current) return
 
       const hours = new Array(24).fill(0) as number[]
@@ -100,17 +102,24 @@ export function StaffAnalyticsPanel({ storeId }: StaffAnalyticsPanelProps) {
       if (id !== fetchIdRef.current) return
       setError('Failed to load data.')
     } finally {
-      // Only reset loading flags for the most recent fetch
       if (id === fetchIdRef.current) {
+        console.log('[ANALYTICS] Loading set to false')
         setIsLoading(false)
         setIsRefreshing(false)
       }
     }
   }, [storeId, range])
 
-  // Fires on mount (initial load) and when range changes (background refresh).
-  // Never fires from queue events — this component is isolated from Realtime.
-  useEffect(() => { void fetchData() }, [fetchData])
+  useEffect(() => { console.log('[ANALYTICS] Component mounted') }, [])
+
+  // Fires when the tab is first clicked (activated flips true) and again when
+  // range changes (fetchData identity changes). Guards against premature fetch
+  // while the panel is hidden on page load.
+  useEffect(() => {
+    console.log('[ANALYTICS] activated:', activated, 'hasLoaded:', hasLoadedRef.current)
+    if (!activated) return
+    void fetchData()
+  }, [activated, fetchData])
 
   const chartData = view === 'hour' ? hourData : dayData
   const maxCount  = Math.max(1, ...chartData.map((d) => d.count))

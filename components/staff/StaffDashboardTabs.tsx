@@ -28,16 +28,16 @@ export function StaffDashboardTabs({
 }: StaffDashboardTabsProps) {
   const [tab, setTab] = useState<Tab>('queue')
 
-  // Analytics and Feedback are mounted the first time their tab is clicked,
-  // then kept alive in the DOM (hidden with CSS) so they never re-fetch on
-  // subsequent tab switches. Queue is allowed to unmount normally.
-  const [analyticsEverShown, setAnalyticsEverShown] = useState(false)
-  const [feedbackEverShown,  setFeedbackEverShown]  = useState(false)
+  // activated flags: false until the tab is clicked for the first time.
+  // The child panels watch this prop and only start fetching once it flips true.
+  // This prevents any fetch from firing while the panel is hidden on page load.
+  const [analyticsActivated, setAnalyticsActivated] = useState(false)
+  const [feedbackActivated,  setFeedbackActivated]  = useState(false)
 
   const handleTabChange = (next: Tab) => {
     setTab(next)
-    if (next === 'analytics') setAnalyticsEverShown(true)
-    if (next === 'feedback')  setFeedbackEverShown(true)
+    if (next === 'analytics') setAnalyticsActivated(true)
+    if (next === 'feedback')  setFeedbackActivated(true)
   }
 
   return (
@@ -70,21 +70,18 @@ export function StaffDashboardTabs({
         />
       )}
 
-      {/* Analytics — mounted once on first click, then kept alive with CSS.
-          This prevents the component from unmounting/remounting on tab switch,
-          which was the sole cause of the "stuck loading" bug. */}
-      {analyticsEverShown && (
-        <div className={tab === 'analytics' ? '' : 'hidden'}>
-          <StaffAnalyticsPanel storeId={storeId} />
-        </div>
-      )}
+      {/* Analytics — always mounted, hidden via inline style (not Tailwind hidden class).
+          style={{ display }} lets React keep the component fully alive without any
+          CSS specificity interference. activated=false blocks the initial fetch until
+          the first tab click; after that the panel owns its own refresh lifecycle. */}
+      <div style={{ display: tab === 'analytics' ? 'block' : 'none' }}>
+        <StaffAnalyticsPanel storeId={storeId} activated={analyticsActivated} />
+      </div>
 
-      {/* Feedback — same mount-once pattern */}
-      {feedbackEverShown && (
-        <div className={tab === 'feedback' ? '' : 'hidden'}>
-          <StaffFeedbackPanel storeId={storeId} />
-        </div>
-      )}
+      {/* Feedback — same always-mounted pattern */}
+      <div style={{ display: tab === 'feedback' ? 'block' : 'none' }}>
+        <StaffFeedbackPanel storeId={storeId} activated={feedbackActivated} />
+      </div>
     </div>
   )
 }

@@ -42,9 +42,10 @@ function StarRow({ filled, size = 'sm' }: { filled: number; size?: 'sm' | 'md' }
 
 interface StaffFeedbackPanelProps {
   storeId: string
+  activated: boolean
 }
 
-export function StaffFeedbackPanel({ storeId }: StaffFeedbackPanelProps) {
+export function StaffFeedbackPanel({ storeId, activated }: StaffFeedbackPanelProps) {
   const [isLoading, setIsLoading]     = useState(false)      // first-ever fetch
   const [isRefreshing, setIsRefreshing] = useState(false)    // background re-fetch
   const [error, setError]             = useState<string | null>(null)
@@ -68,12 +69,14 @@ export function StaffFeedbackPanel({ storeId }: StaffFeedbackPanelProps) {
 
     try {
       const supabase = createClient()
+      console.log('[FEEDBACK] About to fetch, storeId:', storeId)
       const { data, error: queryError } = await supabase
         .from('ratings')
         .select('id, stars, message, submitted_at')
         .eq('store_id', storeId)
         .order('submitted_at', { ascending: false })
 
+      console.log('[FEEDBACK] Supabase response:', data, queryError)
       if (queryError) throw queryError
       if (id !== fetchIdRef.current) return
 
@@ -84,14 +87,20 @@ export function StaffFeedbackPanel({ storeId }: StaffFeedbackPanelProps) {
       setError('Failed to load ratings.')
     } finally {
       if (id === fetchIdRef.current) {
+        console.log('[FEEDBACK] Loading set to false')
         setIsLoading(false)
         setIsRefreshing(false)
       }
     }
   }, [storeId])
 
-  // Fires once on mount (first tab click). Never re-fires from queue events.
-  useEffect(() => { void fetchRatings() }, [fetchRatings])
+  useEffect(() => { console.log('[FEEDBACK] Component mounted') }, [])
+
+  useEffect(() => {
+    console.log('[FEEDBACK] activated:', activated, 'hasLoaded:', hasLoadedRef.current)
+    if (!activated) return
+    void fetchRatings()
+  }, [activated, fetchRatings])
 
   const avg = ratings.length > 0
     ? ratings.reduce((s, r) => s + r.stars, 0) / ratings.length
