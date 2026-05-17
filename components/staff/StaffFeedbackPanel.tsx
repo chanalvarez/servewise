@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, Star } from 'lucide-react'
-import { supabaseQuery } from '@/lib/supabase/clients'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -69,19 +68,15 @@ export function StaffFeedbackPanel({ storeId, activated }: StaffFeedbackPanelPro
 
     try {
       console.log('[FEEDBACK] About to fetch, storeId:', storeId)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: queryError } = await Promise.race<any>([
-        supabaseQuery
-          .from('ratings')
-          .select('id, stars, message, submitted_at')
-          .eq('store_id', storeId)
-          .order('submitted_at', { ascending: false }),
-        new Promise((_, reject) =>
+      const res = await Promise.race<Response>([
+        fetch(`/api/staff/ratings?storeId=${storeId}`),
+        new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Query timed out')), 8000)
         ),
       ])
-      console.log('[FEEDBACK] Supabase response:', data, queryError)
-      if (queryError) throw queryError
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const { ratings: data } = await res.json() as { ratings: Rating[] }
+      console.log('[FEEDBACK] API response:', data)
       if (id !== fetchIdRef.current) return
 
       setRatings(data ?? [])
