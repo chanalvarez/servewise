@@ -1,13 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import { ListOrdered, BarChart2, Star } from 'lucide-react'
+import { ListOrdered, BarChart2, Star, AlertCircle } from 'lucide-react'
 import { StaffQueuePanel } from './StaffQueuePanel'
 import { StaffAnalyticsPanel } from './StaffAnalyticsPanel'
 import { StaffFeedbackPanel } from './StaffFeedbackPanel'
+import { MissedQueueTab } from './MissedQueueTab'
 import type { Store, Ticket } from '@/types'
 
-type Tab = 'queue' | 'analytics' | 'feedback'
+type Tab = 'queue' | 'missed' | 'analytics' | 'feedback'
 
 interface StaffDashboardTabsProps {
   storeId: string
@@ -16,9 +17,10 @@ interface StaffDashboardTabsProps {
 }
 
 const TABS: { key: Tab; label: string; Icon: React.ElementType }[] = [
-  { key: 'queue',     label: 'Queue',     Icon: ListOrdered },
-  { key: 'analytics', label: 'Analytics', Icon: BarChart2   },
-  { key: 'feedback',  label: 'Feedback',  Icon: Star        },
+  { key: 'queue',     label: 'Queue',     Icon: ListOrdered  },
+  { key: 'missed',   label: 'Missed',    Icon: AlertCircle  },
+  { key: 'analytics', label: 'Analytics', Icon: BarChart2    },
+  { key: 'feedback',  label: 'Feedback',  Icon: Star         },
 ]
 
 export function StaffDashboardTabs({
@@ -29,13 +31,14 @@ export function StaffDashboardTabs({
   const [tab, setTab] = useState<Tab>('queue')
 
   // activated flags: false until the tab is clicked for the first time.
-  // The child panels watch this prop and only start fetching once it flips true.
-  // This prevents any fetch from firing while the panel is hidden on page load.
+  // Prevents any fetch from firing while the panel is hidden on page load.
+  const [missedActivated,    setMissedActivated]    = useState(false)
   const [analyticsActivated, setAnalyticsActivated] = useState(false)
   const [feedbackActivated,  setFeedbackActivated]  = useState(false)
 
   const handleTabChange = (next: Tab) => {
     setTab(next)
+    if (next === 'missed')    setMissedActivated(true)
     if (next === 'analytics') setAnalyticsActivated(true)
     if (next === 'feedback')  setFeedbackActivated(true)
   }
@@ -52,7 +55,11 @@ export function StaffDashboardTabs({
             key={key}
             onClick={() => handleTabChange(key)}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-semibold transition-colors ${
-              tab === key ? 'bg-indigo-600 text-white' : 'text-white/50 hover:text-white/80'
+              tab === key
+                ? key === 'missed'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-indigo-600 text-white'
+                : 'text-white/50 hover:text-white/80'
             }`}
           >
             <Icon className="h-4 w-4" />
@@ -70,10 +77,12 @@ export function StaffDashboardTabs({
         />
       )}
 
-      {/* Analytics — always mounted, hidden via inline style (not Tailwind hidden class).
-          style={{ display }} lets React keep the component fully alive without any
-          CSS specificity interference. activated=false blocks the initial fetch until
-          the first tab click; after that the panel owns its own refresh lifecycle. */}
+      {/* Missed — always mounted once activated, hidden via style */}
+      <div style={{ display: tab === 'missed' ? 'block' : 'none' }}>
+        <MissedQueueTab storeId={storeId} activated={missedActivated} />
+      </div>
+
+      {/* Analytics — always mounted, hidden via inline style */}
       <div style={{ display: tab === 'analytics' ? 'block' : 'none' }}>
         <StaffAnalyticsPanel storeId={storeId} activated={analyticsActivated} />
       </div>

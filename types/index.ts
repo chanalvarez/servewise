@@ -7,6 +7,7 @@ export type TicketStatus =
   | 'called'
   | 'arrived'
   | 'no_show'
+  | 'missed'
   | 'voided'
   | 'completed'
 
@@ -47,6 +48,11 @@ export interface Ticket {
   called_at: string | null
   arrived_at: string | null
   served_at: string | null
+  // MEQ fields
+  meq_expires_at: string | null
+  customer_returning: boolean
+  reinstated: boolean
+  position: number | null
   created_at: string
   updated_at: string
 }

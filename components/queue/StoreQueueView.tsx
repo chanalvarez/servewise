@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Loader2, MapPin, LogIn, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
@@ -8,12 +8,14 @@ import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
 import { useActiveTickets } from '@/context/ActiveTicketsContext'
 import { NowServingBoard } from './NowServingBoard'
 import { NoShowCountdown } from './NoShowCountdown'
+import { MissedNoticeScreen } from './MissedNoticeScreen'
 import { VibeStatusBadge } from '@/components/store/VibeStatusBadge'
 import type { Mall, Store, Ticket } from '@/types'
 import { AlertDisplay } from '@/components/AlertDisplay'
 import type { AlertState } from '@/components/AlertDisplay'
 import { useAlertSystem } from '@/lib/hooks/useAlertSystem'
 import { RatingOverlay } from './RatingOverlay'
+import { exitMissedQueue } from '@/lib/actions/queue'
 
 interface StoreQueueViewProps {
   store: Store
@@ -36,11 +38,22 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   const [calledAt, setCalledAt] = useState<string | null>(null)
   const prevStatusRef = useRef<string | undefined>(undefined)
 
-  const [showRating, setShowRating] = useState(false)
+  const [showRating,     setShowRating]     = useState(false)
+  const [showMEQExpired, setShowMEQExpired] = useState(false)
   const lastTicketIdRef = useRef<string | null>(null)
+
+  // ── Reinstatement toast ───────────────────────────────────────────────────
+  const [showReinstateToast,   setShowReinstateToast]   = useState(false)
+  const shownReinstateToastsRef = useRef<Set<string>>(new Set())
+  // Ref so Realtime callbacks always see the current myTicket without stale closure
+  const myTicketRef = useRef<(typeof activeTickets)[0] | undefined>(undefined)
 
   // My ticket for this store (from global context)
   const myTicket = activeTickets.find((t) => t.store.id === store.id)
+
+  useEffect(() => {
+    myTicketRef.current = myTicket
+  }, [myTicket])
 
   // Keep lastTicketIdRef current so the rating overlay can submit after the ticket disappears
   useEffect(() => {
@@ -48,8 +61,6 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   }, [myTicket?.id])
 
   // Total in-queue = all active ticket statuses (waiting + called + no_show).
-  // Store counters (last_queue_number - current_serving) are the ground truth
-  // since actual ticket rows only exist for customers who joined via the app.
   const activeStatuses = ['waiting', 'called', 'no_show'] as const
   const ticketActiveCount = tickets.filter((t) =>
     activeStatuses.includes(t.status as typeof activeStatuses[number])
@@ -57,9 +68,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   const storeQueueCount = Math.max(0, store.last_queue_number - store.current_serving)
   const waitingCount = Math.max(ticketActiveCount, storeQueueCount)
 
-  // ── Unconditional store polling (guaranteed — stores are public, no auth needed) ──
-  // Keeps current_serving, last_queue_number, is_open, is_cutoff, vibe_status fresh
-  // even when Realtime WebSocket auth isn't ready yet.
+  // ── Store polling (unconditional — no auth needed) ────────────────────────
   useEffect(() => {
     const supabase = createClient()
     let cancelled = false
@@ -85,7 +94,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
     }
   }, [store.id])
 
-  // ── Realtime: store updates (instant layer on top of polling) ────────────
+  // ── Realtime: store updates ───────────────────────────────────────────────
   useEffect(() => {
     const supabase = createClient()
     let cancelled = false
@@ -120,21 +129,22 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
     }
   }, [store.id])
 
-  // ── Realtime: tickets for this store (instant layer — polling is in ActiveTicketsContext) ──
+  // ── Realtime: tickets — queue board + reinstatement toast detection ───────
+  const refetchTickets = useCallback(() => {
+    const supabase = createClient()
+    supabase
+      .from('tickets')
+      .select('*')
+      .eq('store_id', store.id)
+      .in('status', ['waiting', 'called', 'no_show'])
+      .order('queue_number')
+      .then(({ data }) => setTickets(data ?? []))
+  }, [store.id])
+
   useEffect(() => {
     const supabase = createClient()
     let cancelled = false
     let ticketsChannel: ReturnType<typeof supabase.channel> | null = null
-
-    const refetchTickets = () => {
-      supabase
-        .from('tickets')
-        .select('*')
-        .eq('store_id', store.id)
-        .in('status', ['waiting', 'called', 'no_show'])
-        .order('queue_number')
-        .then(({ data }) => { if (!cancelled) setTickets(data ?? []) })
-    }
 
     const setup = async () => {
       await syncRealtimeAuth(supabase)
@@ -142,12 +152,37 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
 
       const ch = supabase
         .channel(`tickets-view-${store.id}`)
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
+        // INSERT/DELETE — just refresh the queue board
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
           () => refetchTickets()
         )
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
+          () => refetchTickets()
+        )
+        // UPDATE — refresh board AND check for reinstatement events
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
+          (payload) => {
+            const updated = payload.new as Ticket
+            const current = myTicketRef.current
+
+            // Reinstatement toast: fire when a ticket transitions to reinstated=true,
+            // the viewer is currently waiting, and it's not their own ticket.
+            if (
+              updated.reinstated === true &&
+              current?.status === 'waiting' &&
+              current?.id !== updated.id &&
+              !shownReinstateToastsRef.current.has(updated.id)
+            ) {
+              shownReinstateToastsRef.current.add(updated.id)
+              setShowReinstateToast(true)
+              setTimeout(() => setShowReinstateToast(false), 5000)
+            }
+
+            refetchTickets()
+          }
+        )
         .subscribe()
+
       if (cancelled) { void supabase.removeChannel(ch); return }
       ticketsChannel = ch
     }
@@ -163,9 +198,9 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
       authSub.unsubscribe()
       if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
     }
-  }, [store.id])
+  }, [store.id, refetchTickets])
 
-  // Watch myTicket status transitions and fire alerts + haptic feedback
+  // ── Status transition effects (alerts, rating, MEQ expiry) ───────────────
   useEffect(() => {
     const status = myTicket?.status
     const prev   = prevStatusRef.current
@@ -181,20 +216,53 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
       setAlertState('noshow')
       playNoShowAlert()
       try { localStorage.setItem('servewise_alert', JSON.stringify({ type: 'noshow', storeId: store.id, storeName: store.name, mallSlug: mall.slug, timestamp: Date.now() })) } catch {}
+    } else if (status === 'missed' && prev !== 'missed') {
+      // No-show window expired → MEQ window opens. Clear the noshow alert.
+      setAlertState('idle')
+      try { localStorage.removeItem('servewise_alert') } catch {}
     } else if (status === 'arrived' || status === 'voided' || status === 'completed') {
       setAlertState('idle')
       try { localStorage.removeItem('servewise_alert') } catch {}
     } else if (!status) {
       setAlertState('idle')
       try { localStorage.removeItem('servewise_alert') } catch {}
-      // Ticket was removed after being 'arrived' → staff clicked Served
       if (prev === 'arrived') setShowRating(true)
+      // MEQ cleanup cron (or customer exit) deleted the ticket → show expiry screen
+      if (prev === 'missed')  setShowMEQExpired(true)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myTicket?.status])
 
+  // ── MEQ handlers ─────────────────────────────────────────────────────────
+
+  /** Staff reinstated this customer — ticket is now 'waiting' again. Nothing needed here:
+   *  myTicket.status will change and the normal waiting UI will render. */
+  const handleConfirmReturn = () => {
+    // customer_returning=true is now in the DB; UI reflects it via MissedNoticeScreen's
+    // local hasConfirmed state — no additional work needed in this component.
+  }
+
+  const handleExitQueue = () => {
+    // The exitMissedQueue RPC deletes the row; the Realtime DELETE event will fire,
+    // causing refreshTickets() in ActiveTicketsContext to run, which drops myTicket.
+    // prevStatus will be 'missed', triggering setShowMEQExpired(true) above.
+    // No explicit state change needed here.
+  }
+
+  // Client-side fallback for MEQ expiry: the countdown in MissedNoticeScreen
+  // hit zero before the pg_cron job fired.  Delete the entry and show the screen.
+  const handleCountdownExpired = async () => {
+    if (!myTicket) return
+    try {
+      await exitMissedQueue(myTicket.id)
+    } catch {
+      // pg_cron may have already deleted it — either way show the expired screen
+    }
+    setShowMEQExpired(true)
+  }
+
+  // ── Join handler ─────────────────────────────────────────────────────────
   const handleJoin = async () => {
-    // If we already have a ticket for this store, just open the drawer.
     if (myTicket) {
       setDrawerOpen(true)
       return
@@ -206,10 +274,6 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
     try {
       const supabase = createClient()
 
-      // Guarantee a session exists before calling the RPC.
-      // On PC browsers the anonymous sign-in may still be in-flight when the
-      // user clicks Join (the 4-second safety timer unblocked the button early).
-      // Without a session auth.uid() is null and the RPC silently hangs.
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
         const { error: signInError } = await supabase.auth.signInAnonymously()
@@ -223,7 +287,6 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
 
       if (error) {
         if (error.message.toLowerCase().includes('already in queue')) {
-          // Ticket already exists — refresh to surface it
           await refreshTickets().catch(() => {})
           setDrawerOpen(true)
           return
@@ -232,10 +295,8 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
         return
       }
 
-      // Success — immediately refresh so myTicket is set and the board updates
       await refreshTickets().catch(() => {})
       setDrawerOpen(true)
-      // Request notification permission inside the user gesture context of the join tap
       const perm = await requestNotificationPermission()
       if (perm === 'granted') setNotifStatus('granted')
       else if (perm === 'denied') setNotifStatus('denied')
@@ -255,6 +316,8 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
         return 'You were called but not present. Arrive before the countdown ends.'
       case 'arrived':
         return "You're being served — stay at the counter."
+      case 'missed':
+        return null  // handled by MissedNoticeScreen
       case 'waiting': {
         const ahead = Math.max(0, myTicket.queue_number - store.current_serving - 1)
         return ahead === 0
@@ -285,6 +348,24 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
           onDone={() => setShowRating(false)}
         />
       )}
+
+      {/* Reinstatement notice toast — auto-dismisses after 5 s */}
+      {showReinstateToast && (
+        <div
+          className="fixed top-4 left-4 right-4 z-50 mx-auto max-w-2xl rounded-2xl px-4 py-3 shadow-xl"
+          style={{
+            background: 'rgba(99,102,241,0.15)',
+            border:     '1px solid rgba(99,102,241,0.3)',
+            backdropFilter: 'blur(12px)',
+          }}
+        >
+          <p className="text-sm font-medium text-indigo-200 leading-snug">
+            A previously called customer has returned and been reinserted into the queue.
+            Your queue number stays the same — there may be a short additional wait.
+          </p>
+        </div>
+      )}
+
       {/* Sticky header */}
       <div className="glass-dark sticky top-0 z-10">
         <div className="mx-auto max-w-2xl px-4 py-4">
@@ -322,7 +403,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
           waitingCount={waitingCount}
         />
 
-        {/* No-show countdown (full-width) */}
+        {/* No-show countdown (5-min window, before transitioning to missed) */}
         {myTicket?.status === 'no_show' && myTicket.no_show_triggered_at && (
           <div
             className="flex justify-center rounded-3xl py-8"
@@ -332,160 +413,189 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
           </div>
         )}
 
-        {/* Status / action area */}
-        {myTicket && store.is_cutoff && (
+        {/* ── MEQ expiry screen ──────────────────────────────────────────────
+            Shown when the customer's MEQ window expires (ticket deleted by cron
+            or by the client-side countdown fallback). */}
+        {showMEQExpired ? (
           <div
-            className="rounded-2xl px-4 py-3 flex items-center gap-3"
+            className="rounded-3xl p-8 text-center"
             style={{
-              background: 'rgba(251,146,60,0.08)',
-              border: '1px solid rgba(251,146,60,0.25)',
+              background: 'rgba(255,255,255,0.04)',
+              border:     '1px solid rgba(255,255,255,0.07)',
             }}
           >
-            <Clock className="h-4 w-4 flex-shrink-0 text-amber-400" />
-            <div>
-              <p className="text-sm font-semibold text-amber-300">Queue is now closed</p>
-              <p className="text-xs text-amber-400/60">This store is no longer accepting new customers</p>
-            </div>
+            <p className="text-4xl mb-4">⏱</p>
+            <p className="text-lg font-bold text-white mb-2">Queue slot expired</p>
+            <p className="text-sm text-white/50">
+              Your queue slot has expired. Thank you for visiting.
+            </p>
           </div>
-        )}
 
-        {ticketsLoading ? (
-          /* Still resolving whether the user has a ticket — show a neutral skeleton
-             so the Join button never flashes for someone who already joined. */
-          <div
-            className="rounded-2xl p-5 text-center animate-pulse"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
-          >
-            <div className="mx-auto h-3 w-32 rounded-full bg-white/10" />
-            <div className="mx-auto mt-2 h-3 w-20 rounded-full bg-white/07" />
-          </div>
-        ) : myTicket ? (
-          <div
-            className="rounded-2xl p-5 text-center"
-            style={
-              myTicket.status === 'called'
-                ? { background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }
-                : myTicket.status === 'no_show'
-                ? { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)' }
-                : myTicket.status === 'arrived'
-                ? { background: 'rgba(99,102,241,0.13)', border: '1px solid rgba(99,102,241,0.35)' }
-                : { background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }
-            }
-          >
-            <p
-              className={`text-sm font-semibold ${
-                myTicket.status === 'called'
-                  ? 'text-emerald-400'
-                  : myTicket.status === 'no_show'
-                  ? 'text-red-400'
-                  : myTicket.status === 'arrived'
-                  ? 'text-indigo-300'
-                  : 'text-indigo-300'
-              }`}
-            >
-              You hold ticket{' '}
-              <span className="text-lg font-black tabular-nums text-white">#{myTicket.queue_number}</span>
-            </p>
-            {ticketStatusMessage() && (
-              <p
-                className={`mt-1 text-sm ${
-                  myTicket.status === 'called'
-                    ? 'text-emerald-400/80'
-                    : myTicket.status === 'no_show'
-                    ? 'text-red-400/80'
-                    : 'text-indigo-300/80'
-                }`}
-              >
-                {ticketStatusMessage()}
-              </p>
-            )}
-            <p className="mt-3 text-xs text-white/30">
-              Open the ticket drawer below to manage all your queues
-            </p>
-          </div>
+        ) : myTicket?.status === 'missed' ? (
+          /* ── MEQ missed notice screen ──────────────────────────────────── */
+          <MissedNoticeScreen
+            ticket={myTicket}
+            onConfirmReturn={handleConfirmReturn}
+            onExit={handleExitQueue}
+            onCountdownExpired={handleCountdownExpired}
+          />
+
         ) : (
+          /* ── Normal waiting / joined / store-closed states ─────────────── */
           <>
-            {!store.is_open ? (
+            {myTicket && store.is_cutoff && (
               <div
-                className="rounded-2xl p-6 text-center"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
-              >
-                <p className="font-semibold text-white/60">This store is currently closed</p>
-                <p className="mt-1 text-sm text-white/30">Check back when it reopens</p>
-              </div>
-            ) : store.is_cutoff ? (
-              <div
-                className="rounded-2xl p-6 text-center"
+                className="rounded-2xl px-4 py-3 flex items-center gap-3"
                 style={{
                   background: 'rgba(251,146,60,0.08)',
                   border: '1px solid rgba(251,146,60,0.25)',
-                  boxShadow: '0 0 24px rgba(251,146,60,0.06)',
                 }}
               >
-                <div className="mb-3 flex justify-center">
-                  <div
-                    className="flex h-12 w-12 items-center justify-center rounded-2xl"
-                    style={{ background: 'rgba(251,146,60,0.15)', border: '1px solid rgba(251,146,60,0.3)' }}
-                  >
-                    <Clock className="h-6 w-6 text-amber-400" />
-                  </div>
+                <Clock className="h-4 w-4 flex-shrink-0 text-amber-400" />
+                <div>
+                  <p className="text-sm font-semibold text-amber-300">Queue is now closed</p>
+                  <p className="text-xs text-amber-400/60">This store is no longer accepting new customers</p>
                 </div>
-                <p className="font-semibold text-amber-300">Queue is now closed</p>
-                <p className="mt-1 text-sm text-amber-400/60">
-                  This store is closing soon and is no longer accepting new customers
+              </div>
+            )}
+
+            {ticketsLoading ? (
+              <div
+                className="rounded-2xl p-5 text-center animate-pulse"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+              >
+                <div className="mx-auto h-3 w-32 rounded-full bg-white/10" />
+                <div className="mx-auto mt-2 h-3 w-20 rounded-full bg-white/07" />
+              </div>
+            ) : myTicket ? (
+              <div
+                className="rounded-2xl p-5 text-center"
+                style={
+                  myTicket.status === 'called'
+                    ? { background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }
+                    : myTicket.status === 'no_show'
+                    ? { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)' }
+                    : myTicket.status === 'arrived'
+                    ? { background: 'rgba(99,102,241,0.13)', border: '1px solid rgba(99,102,241,0.35)' }
+                    : { background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }
+                }
+              >
+                <p
+                  className={`text-sm font-semibold ${
+                    myTicket.status === 'called'
+                      ? 'text-emerald-400'
+                      : myTicket.status === 'no_show'
+                      ? 'text-red-400'
+                      : myTicket.status === 'arrived'
+                      ? 'text-indigo-300'
+                      : 'text-indigo-300'
+                  }`}
+                >
+                  You hold ticket{' '}
+                  <span className="text-lg font-black tabular-nums text-white">#{myTicket.queue_number}</span>
+                </p>
+                {ticketStatusMessage() && (
+                  <p
+                    className={`mt-1 text-sm ${
+                      myTicket.status === 'called'
+                        ? 'text-emerald-400/80'
+                        : myTicket.status === 'no_show'
+                        ? 'text-red-400/80'
+                        : 'text-indigo-300/80'
+                    }`}
+                  >
+                    {ticketStatusMessage()}
+                  </p>
+                )}
+                <p className="mt-3 text-xs text-white/30">
+                  Open the ticket drawer below to manage all your queues
                 </p>
               </div>
             ) : (
               <>
-                {error && (
+                {!store.is_open ? (
                   <div
-                    className="rounded-xl px-4 py-3 text-sm text-red-400"
-                    style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}
+                    className="rounded-2xl p-6 text-center"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
                   >
-                    {error}
+                    <p className="font-semibold text-white/60">This store is currently closed</p>
+                    <p className="mt-1 text-sm text-white/30">Check back when it reopens</p>
                   </div>
-                )}
-                {notifStatus === 'granted' && (
+                ) : store.is_cutoff ? (
                   <div
-                    className="rounded-xl px-4 py-3 text-sm text-emerald-400"
-                    style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)' }}
+                    className="rounded-2xl p-6 text-center"
+                    style={{
+                      background: 'rgba(251,146,60,0.08)',
+                      border: '1px solid rgba(251,146,60,0.25)',
+                      boxShadow: '0 0 24px rgba(251,146,60,0.06)',
+                    }}
                   >
-                    Notifications enabled — we&apos;ll alert you when your turn is near
+                    <div className="mb-3 flex justify-center">
+                      <div
+                        className="flex h-12 w-12 items-center justify-center rounded-2xl"
+                        style={{ background: 'rgba(251,146,60,0.15)', border: '1px solid rgba(251,146,60,0.3)' }}
+                      >
+                        <Clock className="h-6 w-6 text-amber-400" />
+                      </div>
+                    </div>
+                    <p className="font-semibold text-amber-300">Queue is now closed</p>
+                    <p className="mt-1 text-sm text-amber-400/60">
+                      This store is closing soon and is no longer accepting new customers
+                    </p>
                   </div>
+                ) : (
+                  <>
+                    {error && (
+                      <div
+                        className="rounded-xl px-4 py-3 text-sm text-red-400"
+                        style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}
+                      >
+                        {error}
+                      </div>
+                    )}
+                    {notifStatus === 'granted' && (
+                      <div
+                        className="rounded-xl px-4 py-3 text-sm text-emerald-400"
+                        style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)' }}
+                      >
+                        Notifications enabled — we&apos;ll alert you when your turn is near
+                      </div>
+                    )}
+                    {notifStatus === 'denied' && (
+                      <div
+                        className="rounded-xl px-4 py-3 text-sm text-amber-400"
+                        style={{ background: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.25)' }}
+                      >
+                        Notifications blocked — keep this page open to receive alerts
+                      </div>
+                    )}
+                    <button
+                      onClick={handleJoin}
+                      onPointerDown={unlockAudio}
+                      disabled={joining}
+                      className="flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-lg font-semibold text-white transition-all hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+                      style={{
+                        background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
+                        boxShadow: '0 0 24px rgba(99,102,241,0.4)',
+                      }}
+                    >
+                      {joining ? (
+                        <>
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                          Joining queue…
+                        </>
+                      ) : (
+                        <>
+                          <LogIn className="h-5 w-5" />
+                          Join Queue
+                        </>
+                      )}
+                    </button>
+                    <p className="text-center text-xs text-white/30">
+                      No account needed — you&apos;ll get a ticket number instantly
+                    </p>
+                  </>
                 )}
-                {notifStatus === 'denied' && (
-                  <div
-                    className="rounded-xl px-4 py-3 text-sm text-amber-400"
-                    style={{ background: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.25)' }}
-                  >
-                    Notifications blocked — keep this page open to receive alerts
-                  </div>
-                )}
-                <button
-                  onClick={handleJoin}
-                  onPointerDown={unlockAudio}
-                  disabled={joining}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-lg font-semibold text-white transition-all hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
-                  style={{
-                    background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
-                    boxShadow: '0 0 24px rgba(99,102,241,0.4)',
-                  }}
-                >
-                  {joining ? (
-                    <>
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                      Joining queue…
-                    </>
-                  ) : (
-                    <>
-                      <LogIn className="h-5 w-5" />
-                      Join Queue
-                    </>
-                  )}
-                </button>
-                <p className="text-center text-xs text-white/30">
-                  No account needed — you&apos;ll get a ticket number instantly
-                </p>
               </>
             )}
           </>

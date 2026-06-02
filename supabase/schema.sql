@@ -10,7 +10,7 @@ CREATE EXTENSION IF NOT EXISTS "pg_cron";     -- Enable via Dashboard → Databa
 -- ── Enum Types ────────────────────────────────────────────────────────────────
 
 CREATE TYPE vibe_status AS ENUM ('green', 'yellow', 'red');
-CREATE TYPE ticket_status AS ENUM ('waiting', 'called', 'arrived', 'no_show', 'voided', 'completed');
+CREATE TYPE ticket_status AS ENUM ('waiting', 'called', 'arrived', 'no_show', 'missed', 'voided', 'completed');
 
 -- ── Tables ────────────────────────────────────────────────────────────────────
 
@@ -41,16 +41,24 @@ CREATE TABLE stores (
 
 CREATE TABLE tickets (
   id                   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  store_id             UUID         NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
-  customer_id          UUID         NOT NULL,  -- auth.uid() of the anonymous/named user
-  queue_number         INT          NOT NULL,
+  store_id             UUID          NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+  customer_id          UUID          NOT NULL,  -- auth.uid() of the anonymous/named user
+  queue_number         INT           NOT NULL,
   status               ticket_status NOT NULL DEFAULT 'waiting',
   no_show_triggered_at TIMESTAMPTZ,            -- set by staff; drives the 5-min countdown
   called_at            TIMESTAMPTZ,            -- stamped by call_next() RPC (server time)
   arrived_at           TIMESTAMPTZ,            -- stamped by markArrived server action
   served_at            TIMESTAMPTZ,            -- stamped by markServed server action
-  created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-  updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+  -- MEQ columns ──────────────────────────────────────────────────────────────
+  meq_expires_at       TIMESTAMPTZ,            -- set when status → missed; 45-min window
+  customer_returning   BOOLEAN       NOT NULL DEFAULT false,  -- customer clicked "I'm Here"
+  reinstated           BOOLEAN       NOT NULL DEFAULT false,  -- staff reinstated this entry
+  -- Float so reinstated entries can occupy fractional positions (e.g. 2.5)
+  -- between existing whole-number positions without renumbering the queue.
+  position             FLOAT8,                 -- service order; NULL treated as queue_number
+  -- ──────────────────────────────────────────────────────────────────────────
+  created_at           TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
 -- Links Supabase Auth users → store they manage
@@ -69,6 +77,7 @@ CREATE INDEX idx_tickets_store_id         ON tickets(store_id);
 CREATE INDEX idx_tickets_customer_id      ON tickets(customer_id);
 CREATE INDEX idx_tickets_status           ON tickets(status);
 CREATE INDEX idx_tickets_no_show_expires  ON tickets(no_show_triggered_at) WHERE status = 'no_show';
+CREATE INDEX idx_tickets_meq_expires      ON tickets(meq_expires_at)       WHERE status = 'missed';
 
 -- ── updated_at Trigger ────────────────────────────────────────────────────────
 
@@ -99,12 +108,12 @@ BEGIN
     RAISE EXCEPTION 'Not authenticated';
   END IF;
 
-  -- Prevent duplicate active ticket for the same store
+  -- Prevent duplicate active ticket (includes missed entries)
   IF EXISTS (
     SELECT 1 FROM tickets
     WHERE store_id   = p_store_id
       AND customer_id = v_uid
-      AND status IN ('waiting', 'called', 'no_show')
+      AND status IN ('waiting', 'called', 'no_show', 'missed')
   ) THEN
     RAISE EXCEPTION 'Already in queue for this store';
   END IF;
@@ -125,8 +134,9 @@ BEGIN
   WHERE id = p_store_id
   RETURNING last_queue_number INTO v_next_num;
 
-  INSERT INTO tickets (store_id, customer_id, queue_number)
-  VALUES (p_store_id, v_uid, v_next_num)
+  -- position = queue_number so normal entries sort identically to before MEQ
+  INSERT INTO tickets (store_id, customer_id, queue_number, position)
+  VALUES (p_store_id, v_uid, v_next_num, v_next_num)
   RETURNING * INTO v_ticket;
 
   RETURN v_ticket;
@@ -154,7 +164,9 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ── RPC: call_next ────────────────────────────────────────────────────────────
--- Staff action: completes any lingering 'called' ticket, then calls the next waiting one.
+-- Staff action: completes any lingering 'called' ticket, then calls the next
+-- waiting one. Orders by COALESCE(position, queue_number) so reinstated entries
+-- with fractional positions slot in correctly.
 
 CREATE OR REPLACE FUNCTION call_next(p_store_id UUID)
 RETURNS tickets AS $$
@@ -170,11 +182,11 @@ BEGIN
   UPDATE tickets SET status = 'completed'
   WHERE store_id = p_store_id AND status = 'called';
 
-  -- Grab the next waiting ticket (skip-locked for concurrent safety)
+  -- Grab the next waiting ticket ordered by effective service position
   SELECT * INTO v_ticket
   FROM tickets
   WHERE store_id = p_store_id AND status = 'waiting'
-  ORDER BY queue_number ASC
+  ORDER BY COALESCE(position, queue_number::FLOAT8) ASC
   LIMIT 1 FOR UPDATE SKIP LOCKED;
 
   IF v_ticket IS NULL THEN
@@ -193,16 +205,79 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- ── pg_cron: auto-void no-shows after 5 minutes ───────────────────────────────
+-- ── RPC: set_customer_returning ───────────────────────────────────────────────
+-- Customer confirms they are on the way back — sets the "On their way" badge
+-- on the staff Missed tab without automatically reinstating them.
+
+CREATE OR REPLACE FUNCTION set_customer_returning(p_ticket_id UUID)
+RETURNS void AS $$
+DECLARE
+  v_uid UUID := auth.uid();
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
+
+  UPDATE tickets
+     SET customer_returning = true
+   WHERE id          = p_ticket_id
+     AND customer_id = v_uid
+     AND status      = 'missed';
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Ticket not found or not in missed status';
+  END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ── RPC: exit_missed_queue ────────────────────────────────────────────────────
+-- Customer permanently exits from their missed entry.
+
+CREATE OR REPLACE FUNCTION exit_missed_queue(p_ticket_id UUID)
+RETURNS void AS $$
+DECLARE
+  v_uid UUID := auth.uid();
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
+
+  DELETE FROM tickets
+   WHERE id          = p_ticket_id
+     AND customer_id = v_uid
+     AND status      = 'missed';
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Ticket not found or not in missed status';
+  END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ── pg_cron: transition no-shows to missed after 5 minutes ───────────────────
+-- Replaces the old "void-expired-no-shows" job.  Instead of voiding the ticket,
+-- we move it to 'missed' and open a 45-minute MEQ window.
 
 SELECT cron.schedule(
   'void-expired-no-shows',
   '* * * * *',
   $$
     UPDATE tickets
-    SET    status = 'voided'
-    WHERE  status                = 'no_show'
-      AND  no_show_triggered_at < NOW() - INTERVAL '5 minutes';
+       SET status         = 'missed',
+           meq_expires_at = NOW() + INTERVAL '45 minutes'
+     WHERE status                = 'no_show'
+       AND no_show_triggered_at < NOW() - INTERVAL '5 minutes';
+  $$
+);
+
+-- ── pg_cron: delete expired MEQ entries every minute ─────────────────────────
+-- Fires a DELETE which Supabase Realtime broadcasts to the customer's browser,
+-- triggering the expiry screen.  The customer-side countdown fallback also
+-- calls exit_missed_queue() when it reaches zero, so the entry is cleaned up
+-- regardless of which path runs first.
+
+SELECT cron.schedule(
+  'cleanup-expired-meq',
+  '* * * * *',
+  $$
+    DELETE FROM tickets
+     WHERE status = 'missed'
+       AND meq_expires_at <= NOW();
   $$
 );
 
@@ -257,8 +332,12 @@ CREATE POLICY "tickets_read" ON tickets FOR SELECT
 CREATE POLICY "tickets_insert_own" ON tickets FOR INSERT
   WITH CHECK (customer_id = auth.uid());
 
--- Tickets: staff can update status fields for their store's tickets
+-- Tickets: staff can update any ticket in their store (status changes, reinstatement)
 CREATE POLICY "tickets_staff_update" ON tickets FOR UPDATE
+  USING (store_id IN (SELECT store_id FROM staff WHERE id = auth.uid()));
+
+-- Tickets: staff can delete tickets in their store (Remove missed entry)
+CREATE POLICY "tickets_staff_delete" ON tickets FOR DELETE
   USING (store_id IN (SELECT store_id FROM staff WHERE id = auth.uid()));
 
 -- Staff: members can read only their own record

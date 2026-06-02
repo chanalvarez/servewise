@@ -29,6 +29,13 @@ const STATUS_CONFIG = {
     icon: XCircle,
     iconClass: 'text-red-400',
   },
+  missed: {
+    label: 'Return window open',
+    labelStyle: { background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.3)', color: '#fcd34d' },
+    cardStyle: { background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.2)' },
+    icon: AlertCircle,
+    iconClass: 'text-amber-400',
+  },
   arrived: {
     label: 'Arrived',
     labelStyle: { background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.4)' },

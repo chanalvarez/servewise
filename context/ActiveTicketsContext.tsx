@@ -60,7 +60,7 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
         `
         )
         .eq('customer_id', user.id)
-        .in('status', ['waiting', 'called', 'no_show', 'arrived'])
+        .in('status', ['waiting', 'called', 'no_show', 'missed', 'arrived'])
         .order('created_at', { ascending: true })
 
       if (error) console.error('Fetch tickets error:', error.message)
@@ -208,7 +208,7 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
 
     // Clear localStorage when no ticket is in an alertable state anymore
     const hasActive = tickets.some(t => t.status === 'called' || t.status === 'no_show')
-    const hadActive = Object.values(prev).some(s => s === 'called' || s === 'no_show')
+    const hadActive = Object.values(prev).some(s => s === 'called' || s === 'no_show' || s === 'missed')
     if (!hasActive && hadActive) {
       try { localStorage.removeItem('servewise_alert') } catch {}
     }

@@ -164,3 +164,124 @@ export async function toggleCutoff(storeId: string, isCutoff: boolean) {
 
   if (error) throw new Error(error.message)
 }
+
+// ── MEQ (Missed Entry Queue) server actions ───────────────────────────────────
+
+/** Customer: signal they are returning to the counter.
+ *  Sets customer_returning = true, which surfaces the "On their way" badge
+ *  on the staff Missed tab.  Does NOT reinstate them automatically. */
+export async function markCustomerReturning(ticketId: string) {
+  const supabase = await createClient()
+
+  const { error } = await supabase.rpc('set_customer_returning', {
+    p_ticket_id: ticketId,
+  })
+
+  if (error) throw new Error(error.message)
+}
+
+/** Customer: permanently exit from their missed queue entry (deletes the row). */
+export async function exitMissedQueue(ticketId: string) {
+  const supabase = await createClient()
+
+  const { error } = await supabase.rpc('exit_missed_queue', {
+    p_ticket_id: ticketId,
+  })
+
+  if (error) throw new Error(error.message)
+}
+
+/** Staff: reinstate a missed customer back into the active waiting queue.
+ *
+ *  Interleaved 1:1 insertion rule:
+ *    – The missed customer is placed AFTER the first currently-waiting customer.
+ *    – Their position is set to the midpoint between the 1st and 2nd waiting
+ *      entries (fractional FLOAT8), so no other ticket's position changes.
+ *    – If the queue is empty they go to position 0.5 (served next).
+ *    – If only one person is waiting they go to firstPosition + 0.5.
+ *
+ *  Guards: reinstatement is idempotent — a ticket whose reinstated flag is
+ *  already true is rejected both here and by the disabled button in the UI. */
+export async function reinstateEntry(ticketId: string, storeId: string) {
+  const supabase = await createClient()
+
+  // Verify caller is staff for this store
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user || user.is_anonymous) throw new Error('Unauthorized')
+
+  const { data: staffRecord } = await supabase
+    .from('staff')
+    .select('store_id')
+    .eq('id', user.id)
+    .eq('store_id', storeId)
+    .single()
+
+  if (!staffRecord) throw new Error('Forbidden')
+
+  // Fetch the missed ticket (verify it exists, is missed, and not yet reinstated)
+  const { data: missed } = await supabase
+    .from('tickets')
+    .select('id, reinstated, status')
+    .eq('id', ticketId)
+    .eq('store_id', storeId)
+    .eq('status', 'missed')
+    .single()
+
+  if (!missed) throw new Error('Ticket not found or not in missed status')
+  if (missed.reinstated) throw new Error('Already reinstated')
+
+  // Fetch all currently waiting tickets (both columns needed for fractional maths)
+  const { data: waiting } = await supabase
+    .from('tickets')
+    .select('id, queue_number, position')
+    .eq('store_id', storeId)
+    .eq('status', 'waiting')
+
+  // Sort in JS so COALESCE(position, queue_number) logic is fully applied
+  const waitingList = (waiting ?? []).sort((a, b) => {
+    const posA = a.position ?? a.queue_number
+    const posB = b.position ?? b.queue_number
+    return posA - posB
+  })
+
+  // 1:1 interleaved insertion: place after the 1st waiting customer
+  let newPosition: number
+  if (waitingList.length === 0) {
+    newPosition = 0.5
+  } else if (waitingList.length === 1) {
+    const firstPos = waitingList[0].position ?? waitingList[0].queue_number
+    newPosition = firstPos + 0.5
+  } else {
+    const firstPos  = waitingList[0].position ?? waitingList[0].queue_number
+    const secondPos = waitingList[1].position ?? waitingList[1].queue_number
+    newPosition = (firstPos + secondPos) / 2
+  }
+
+  // Atomically transition status back to waiting with the computed position.
+  // The extra .eq('reinstated', false) guard prevents a race-condition double-reinstate.
+  const { error } = await supabase
+    .from('tickets')
+    .update({
+      status: 'waiting',
+      meq_expires_at: null,
+      reinstated: true,
+      position: newPosition,
+    })
+    .eq('id', ticketId)
+    .eq('status', 'missed')
+    .eq('reinstated', false)
+
+  if (error) throw new Error(error.message)
+}
+
+/** Staff: permanently remove a missed entry (hard delete). */
+export async function removeMissedEntry(ticketId: string) {
+  const supabase = await createClient()
+
+  const { error } = await supabase
+    .from('tickets')
+    .delete()
+    .eq('id', ticketId)
+
+  if (error) throw new Error(error.message)
+}
