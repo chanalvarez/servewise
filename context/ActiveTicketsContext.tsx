@@ -31,10 +31,16 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const supabaseRef = useRef(createClient())
   const prevTicketStatusesRef = useRef<Record<string, string>>({})
+  // Stale-fetch prevention: incremented on every fetchTickets call.
+  // Each call captures its own ID and discards the result if a newer call
+  // has already completed — prevents out-of-order responses from bouncing
+  // myTicket.status back to a previous value (e.g. no_show after missed).
+  const fetchCounterRef = useRef(0)
   const pathname = usePathname()
   const isStaffPage = pathname.includes('/staff')
 
   const fetchTickets = useCallback(async () => {
+    const myFetchId = ++fetchCounterRef.current
     try {
       const supabase = supabaseRef.current
       const {
@@ -63,12 +69,16 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
         .in('status', ['waiting', 'called', 'no_show', 'missed', 'arrived'])
         .order('created_at', { ascending: true })
 
+      // Discard if a newer fetch has already completed
+      if (myFetchId !== fetchCounterRef.current) return
+
       if (error) console.error('Fetch tickets error:', error.message)
       setTickets((data as ActiveTicket[]) ?? [])
     } catch (err) {
       console.error('fetchTickets error:', err)
     } finally {
-      setIsLoading(false)
+      // Only clear loading if this is still the latest fetch
+      if (myFetchId === fetchCounterRef.current) setIsLoading(false)
     }
   }, [])
 

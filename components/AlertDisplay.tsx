@@ -46,46 +46,71 @@ export function AlertDisplay({
   onTwoMinWarning,
   onThirtySecWarning,
 }: AlertDisplayProps) {
-  const [calledMs, setCalledMs]   = useState(TWO_MIN_MS)
-  const [noShowMs, setNoShowMs]   = useState(FIVE_MIN_MS)
-  const twoMinFired    = useRef(false)
-  const thirtySecFired = useRef(false)
+  const [calledMs, setCalledMs] = useState(TWO_MIN_MS)
+  const [noShowMs, setNoShowMs] = useState(FIVE_MIN_MS)
+
+  // ── Callback refs ────────────────────────────────────────────────────────────
+  // Store all callbacks in refs so countdown effects never need them as deps.
+  // This stops the effects from re-running (and resetting guards) every time
+  // StoreQueueView re-renders and recreates its inline arrow functions.
+  const onCalledExpiredRef    = useRef(onCalledExpired)
+  const onNoShowExpiredRef    = useRef(onNoShowExpired)
+  const onTwoMinWarningRef    = useRef(onTwoMinWarning)
+  const onThirtySecWarningRef = useRef(onThirtySecWarning)
+  useEffect(() => { onCalledExpiredRef.current    = onCalledExpired    }, [onCalledExpired])
+  useEffect(() => { onNoShowExpiredRef.current    = onNoShowExpired    }, [onNoShowExpired])
+  useEffect(() => { onTwoMinWarningRef.current    = onTwoMinWarning    }, [onTwoMinWarning])
+  useEffect(() => { onThirtySecWarningRef.current = onThirtySecWarning }, [onThirtySecWarning])
+
+  // ── Warning guards ────────────────────────────────────────────────────────
+  // Keyed on the noShowAt string so they survive effect re-runs within the same
+  // no-show cycle.  The 2-min warning must play exactly once per cycle.
+  // noShowAtKeyRef records which noShowAt value the guards were last reset for.
+  const twoMinFiredKey    = useRef<string | null>(null)
+  const thirtySecFiredKey = useRef<string | null>(null)
 
   // 2-minute countdown — active while customer is in 'called' state
+  // Deps: alertState, calledAt only — callbacks accessed via ref
   useEffect(() => {
     if (alertState !== 'called' || !calledAt) return
     const tick = () => {
       const left = Math.max(0, TWO_MIN_MS - (Date.now() - new Date(calledAt).getTime()))
       setCalledMs(left)
-      if (left === 0) onCalledExpired?.()
+      if (left === 0) onCalledExpiredRef.current?.()
     }
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [alertState, calledAt, onCalledExpired])
+  }, [alertState, calledAt])
 
-  // 5-minute countdown — active while no-show protocol is running
+  // 5-minute no-show countdown
+  // Deps: alertState, noShowAt only — callbacks and guards accessed via refs
   useEffect(() => {
     if (alertState !== 'noshow' || !noShowAt) return
-    twoMinFired.current    = false
-    thirtySecFired.current = false
+
     const tick = () => {
       const left = Math.max(0, FIVE_MIN_MS - (Date.now() - new Date(noShowAt).getTime()))
       setNoShowMs(left)
-      if (left <= 120_000 && !twoMinFired.current) {
-        twoMinFired.current = true
-        onTwoMinWarning?.()
+
+      // 2-min warning: fires once per noShowAt value (new no-show cycle)
+      if (left <= 120_000 && twoMinFiredKey.current !== noShowAt) {
+        twoMinFiredKey.current = noShowAt
+        onTwoMinWarningRef.current?.()
       }
-      if (left <= 30_000 && !thirtySecFired.current) {
-        thirtySecFired.current = true
-        onThirtySecWarning?.()
+
+      // 30-sec warning: same keying pattern
+      if (left <= 30_000 && thirtySecFiredKey.current !== noShowAt) {
+        thirtySecFiredKey.current = noShowAt
+        onThirtySecWarningRef.current?.()
       }
-      if (left === 0) onNoShowExpired?.()
+
+      if (left === 0) onNoShowExpiredRef.current?.()
     }
+
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [alertState, noShowAt, onNoShowExpired, onTwoMinWarning, onThirtySecWarning])
+  }, [alertState, noShowAt])
 
   if (alertState === 'idle') return null
 

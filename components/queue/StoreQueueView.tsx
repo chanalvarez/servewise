@@ -42,8 +42,14 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   const [showMEQExpired, setShowMEQExpired] = useState(false)
   const lastTicketIdRef = useRef<string | null>(null)
 
+  // ── Fix 2: missed-triggered guard ────────────────────────────────────────
+  // Once this ticket reaches 'missed', any stale Realtime/polling fetch that
+  // returns 'no_show' (out-of-order network response) is ignored completely.
+  // Reset when the ticket disappears (new queue cycle).
+  const missedTriggeredRef = useRef(false)
+
   // ── Reinstatement toast ───────────────────────────────────────────────────
-  const [showReinstateToast,   setShowReinstateToast]   = useState(false)
+  const [showReinstateToast,    setShowReinstateToast]    = useState(false)
   const shownReinstateToastsRef = useRef<Set<string>>(new Set())
   // Ref so Realtime callbacks always see the current myTicket without stale closure
   const myTicketRef = useRef<(typeof activeTickets)[0] | undefined>(undefined)
@@ -152,21 +158,18 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
 
       const ch = supabase
         .channel(`tickets-view-${store.id}`)
-        // INSERT/DELETE — just refresh the queue board
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
           () => refetchTickets()
         )
         .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
           () => refetchTickets()
         )
-        // UPDATE — refresh board AND check for reinstatement events
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
           (payload) => {
             const updated = payload.new as Ticket
             const current = myTicketRef.current
 
-            // Reinstatement toast: fire when a ticket transitions to reinstated=true,
-            // the viewer is currently waiting, and it's not their own ticket.
+            // Reinstatement toast: fire when reinstated=true, the viewer is waiting, not their own ticket
             if (
               updated.reinstated === true &&
               current?.status === 'waiting' &&
@@ -200,6 +203,18 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
     }
   }, [store.id, refetchTickets])
 
+  // ── Stable AlertDisplay callbacks ─────────────────────────────────────────
+  // useCallback ensures these are the same reference across re-renders so they
+  // never appear as changed deps inside AlertDisplay's countdown effects.
+  const handleCalledExpired = useCallback(() => setAlertState('noshow'), [])
+
+  // Guard: only transition to 'removed' if we haven't already entered 'missed'.
+  // Prevents the 5-min AlertDisplay countdown from firing 'removed' after the
+  // ticket has already transitioned via the pg_cron path.
+  const handleNoShowExpired = useCallback(() => {
+    if (!missedTriggeredRef.current) setAlertState('removed')
+  }, [])
+
   // ── Status transition effects (alerts, rating, MEQ expiry) ───────────────
   useEffect(() => {
     const status = myTicket?.status
@@ -212,22 +227,30 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
       playCalledAlert()
       requestNotificationPermission()
       try { localStorage.setItem('servewise_alert', JSON.stringify({ type: 'called', storeId: store.id, storeName: store.name, mallSlug: mall.slug, timestamp: Date.now() })) } catch {}
-    } else if (status === 'no_show' && prev !== 'no_show') {
+
+    } else if (status === 'no_show' && prev !== 'no_show' && !missedTriggeredRef.current) {
+      // Fix 2: skip this branch entirely if we already reached 'missed' for this ticket.
+      // A stale out-of-order fetch could otherwise bounce us back to the noshow sound+banner.
       setAlertState('noshow')
       playNoShowAlert()
       try { localStorage.setItem('servewise_alert', JSON.stringify({ type: 'noshow', storeId: store.id, storeName: store.name, mallSlug: mall.slug, timestamp: Date.now() })) } catch {}
+
     } else if (status === 'missed' && prev !== 'missed') {
-      // No-show window expired → MEQ window opens. Clear the noshow alert.
+      // Fix 2: lock the guard so stale 'no_show' bounces are ignored from here on.
+      missedTriggeredRef.current = true
       setAlertState('idle')
       try { localStorage.removeItem('servewise_alert') } catch {}
+
     } else if (status === 'arrived' || status === 'voided' || status === 'completed') {
       setAlertState('idle')
       try { localStorage.removeItem('servewise_alert') } catch {}
+
     } else if (!status) {
+      // Ticket removed — reset missed guard for the next queue cycle
+      missedTriggeredRef.current = false
       setAlertState('idle')
       try { localStorage.removeItem('servewise_alert') } catch {}
       if (prev === 'arrived') setShowRating(true)
-      // MEQ cleanup cron (or customer exit) deleted the ticket → show expiry screen
       if (prev === 'missed')  setShowMEQExpired(true)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -235,22 +258,17 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
 
   // ── MEQ handlers ─────────────────────────────────────────────────────────
 
-  /** Staff reinstated this customer — ticket is now 'waiting' again. Nothing needed here:
-   *  myTicket.status will change and the normal waiting UI will render. */
   const handleConfirmReturn = () => {
     // customer_returning=true is now in the DB; UI reflects it via MissedNoticeScreen's
     // local hasConfirmed state — no additional work needed in this component.
   }
 
   const handleExitQueue = () => {
-    // The exitMissedQueue RPC deletes the row; the Realtime DELETE event will fire,
-    // causing refreshTickets() in ActiveTicketsContext to run, which drops myTicket.
+    // exitMissedQueue RPC deletes the row; Realtime DELETE → refreshTickets → myTicket undefined
     // prevStatus will be 'missed', triggering setShowMEQExpired(true) above.
-    // No explicit state change needed here.
   }
 
-  // Client-side fallback for MEQ expiry: the countdown in MissedNoticeScreen
-  // hit zero before the pg_cron job fired.  Delete the entry and show the screen.
+  // Client-side fallback: countdown hit zero before pg_cron fired.
   const handleCountdownExpired = async () => {
     if (!myTicket) return
     try {
@@ -335,8 +353,8 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
         alertState={alertState}
         calledAt={calledAt}
         noShowAt={myTicket?.no_show_triggered_at ?? null}
-        onCalledExpired={() => setAlertState('noshow')}
-        onNoShowExpired={() => setAlertState('removed')}
+        onCalledExpired={handleCalledExpired}
+        onNoShowExpired={handleNoShowExpired}
         onTwoMinWarning={playUrgentAlert}
         onThirtySecWarning={playUrgentAlert}
       />
@@ -395,28 +413,15 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
         </div>
       </div>
 
+      {/* ── Content area ───────────────────────────────────────────────────────
+          Fix 3: when status === 'missed', render ONLY the MissedNoticeScreen.
+          NowServingBoard, NoShowCountdown, and the join/status panel are hidden
+          entirely — the missed screen takes over the full content area.
+          The expiry screen follows the same exclusive pattern. */}
       <div className="mx-auto max-w-2xl space-y-4 px-4 py-6">
-        {/* Now Serving board */}
-        <NowServingBoard
-          currentServing={store.current_serving}
-          queueNumber={myTicket?.queue_number}
-          waitingCount={waitingCount}
-        />
 
-        {/* No-show countdown (5-min window, before transitioning to missed) */}
-        {myTicket?.status === 'no_show' && myTicket.no_show_triggered_at && (
-          <div
-            className="flex justify-center rounded-3xl py-8"
-            style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)' }}
-          >
-            <NoShowCountdown triggeredAt={myTicket.no_show_triggered_at} />
-          </div>
-        )}
-
-        {/* ── MEQ expiry screen ──────────────────────────────────────────────
-            Shown when the customer's MEQ window expires (ticket deleted by cron
-            or by the client-side countdown fallback). */}
         {showMEQExpired ? (
+          /* ── MEQ expiry screen ─────────────────────────────────────────── */
           <div
             className="rounded-3xl p-8 text-center"
             style={{
@@ -432,7 +437,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
           </div>
 
         ) : myTicket?.status === 'missed' ? (
-          /* ── MEQ missed notice screen ──────────────────────────────────── */
+          /* ── MEQ missed notice — full content-area takeover ───────────── */
           <MissedNoticeScreen
             ticket={myTicket}
             onConfirmReturn={handleConfirmReturn}
@@ -441,8 +446,25 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
           />
 
         ) : (
-          /* ── Normal waiting / joined / store-closed states ─────────────── */
+          /* ── Normal queue UI ───────────────────────────────────────────── */
           <>
+            {/* Now Serving board */}
+            <NowServingBoard
+              currentServing={store.current_serving}
+              queueNumber={myTicket?.queue_number}
+              waitingCount={waitingCount}
+            />
+
+            {/* No-show countdown (5-min window, before transitioning to missed) */}
+            {myTicket?.status === 'no_show' && myTicket.no_show_triggered_at && (
+              <div
+                className="flex justify-center rounded-3xl py-8"
+                style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)' }}
+              >
+                <NoShowCountdown triggeredAt={myTicket.no_show_triggered_at} />
+              </div>
+            )}
+
             {myTicket && store.is_cutoff && (
               <div
                 className="rounded-2xl px-4 py-3 flex items-center gap-3"

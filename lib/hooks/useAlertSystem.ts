@@ -142,14 +142,15 @@ export function useAlertSystem(): UseAlertSystemReturn {
   }, [safeVibrate, playWithCtx])
 
   // Escalation alerts: 2-min remaining and 30-sec remaining
+  // Plays exactly 3 pings with ~500 ms between each, then stops.
   const playUrgentAlert = useCallback(() => {
-    safeVibrate([200, 100, 200, 100, 400])
+    safeVibrate([200, 100, 200, 100, 200])
 
     playWithCtx((ctx) => {
       const t = ctx.currentTime
-      // High-pitched rapid double-beep — most attention-grabbing
-      scheduleDing(ctx, 1567.98, t, 2.0, 0.3)         // G6
-      scheduleDing(ctx, 1567.98, t + 0.22, 2.0, 0.3)  // G6 repeat
+      scheduleDing(ctx, 1567.98, t,        2.0, 0.25)  // ping 1 — G6
+      scheduleDing(ctx, 1567.98, t + 0.50, 2.0, 0.25)  // ping 2 — ~500 ms later
+      scheduleDing(ctx, 1567.98, t + 1.00, 2.0, 0.25)  // ping 3 — ~500 ms later
     })
   }, [safeVibrate, playWithCtx])
 
