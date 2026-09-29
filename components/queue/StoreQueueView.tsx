@@ -208,12 +208,6 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
   // never appear as changed deps inside AlertDisplay's countdown effects.
   const handleCalledExpired = useCallback(() => setAlertState('noshow'), [])
 
-  // Guard: only transition to 'removed' if we haven't already entered 'missed'.
-  // Prevents the 5-min AlertDisplay countdown from firing 'removed' after the
-  // ticket has already transitioned via the pg_cron path.
-  const handleNoShowExpired = useCallback(() => {
-    if (!missedTriggeredRef.current) setAlertState('removed')
-  }, [])
 
   // ── Status transition effects (alerts, rating, MEQ expiry) ───────────────
   useEffect(() => {
@@ -354,7 +348,6 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
         calledAt={calledAt}
         noShowAt={myTicket?.no_show_triggered_at ?? null}
         onCalledExpired={handleCalledExpired}
-        onNoShowExpired={handleNoShowExpired}
         onTwoMinWarning={playUrgentAlert}
         onThirtySecWarning={playUrgentAlert}
       />

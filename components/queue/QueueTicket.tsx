@@ -156,10 +156,9 @@ export function QueueTicket({ ticket, onRemove }: QueueTicketProps) {
           className="mt-4 flex justify-center pt-4"
           style={{ borderTop: '1px solid rgba(239,68,68,0.15)' }}
         >
-          <NoShowCountdown
-            triggeredAt={ticket.no_show_triggered_at}
-            onExpired={onRemove}
-          />
+          {/* No onExpired: the server (pg_cron) owns the no_show → missed transition.
+              Removing the ticket locally here made the poll re-add it and flicker. */}
+          <NoShowCountdown triggeredAt={ticket.no_show_triggered_at} />
         </div>
       )}
     </div>

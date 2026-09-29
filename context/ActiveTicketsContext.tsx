@@ -43,9 +43,11 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
     const myFetchId = ++fetchCounterRef.current
     try {
       const supabase = supabaseRef.current
+      // getSession reads the local session (no Auth network call per poll)
       const {
-        data: { user },
-      } = await supabase.auth.getUser()
+        data: { session },
+      } = await supabase.auth.getSession()
+      const user = session?.user
 
       if (!user) {
         setIsLoading(false)
@@ -73,7 +75,14 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
       if (myFetchId !== fetchCounterRef.current) return
 
       if (error) console.error('Fetch tickets error:', error.message)
-      setTickets((data as ActiveTicket[]) ?? [])
+      // Freshness guard: never let an older row overwrite a newer one we already hold
+      const fresh = (data as ActiveTicket[]) ?? []
+      setTickets((prev) =>
+        fresh.map((row) => {
+          const held = prev.find((t) => t.id === row.id)
+          return held && held.updated_at > row.updated_at ? held : row
+        })
+      )
     } catch (err) {
       console.error('fetchTickets error:', err)
     } finally {

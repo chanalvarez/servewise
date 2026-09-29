@@ -181,9 +181,11 @@ export function AlertDisplay({
             <p className="text-sm font-bold text-white">
               ⚠️ No-Show Protocol Active
             </p>
-            <p className={`text-xs ${theme.sub}`}>Return now or lose your spot</p>
+            <p className={`text-xs ${theme.sub}`}>
+              {noShowMs === 0 ? 'Time is up — confirming with the store…' : 'Return now or lose your spot'}
+            </p>
           </div>
-          {noShowAt && (
+          {noShowAt && noShowMs > 0 && (
             <div className="flex-shrink-0 text-right">
               <p className="text-lg font-black tabular-nums text-white">{fmt(noShowMs)}</p>
               <p className={`text-xs ${theme.sub}`}>remaining</p>
