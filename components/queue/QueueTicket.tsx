@@ -61,15 +61,16 @@ const STATUS_CONFIG = {
 
 interface QueueTicketProps {
   ticket: ActiveTicket
+  /** Active tickets ahead in service order (from my_queue_positions); undefined until loaded */
+  ahead?: number
   onRemove: () => void
 }
 
-export function QueueTicket({ ticket, onRemove }: QueueTicketProps) {
+export function QueueTicket({ ticket, ahead, onRemove }: QueueTicketProps) {
   const [leaving, setLeaving] = useState(false)
   const [leaveError, setLeaveError] = useState<string | null>(null)
   const cfg = STATUS_CONFIG[ticket.status]
   const Icon = cfg.icon
-  const aheadCount = Math.max(0, ticket.queue_number - ticket.store.current_serving - 1)
 
   const handleLeave = async () => {
     if (leaving) return
@@ -115,12 +116,12 @@ export function QueueTicket({ ticket, onRemove }: QueueTicketProps) {
             </span>
           </div>
 
-          {ticket.status === 'waiting' && aheadCount > 0 && (
+          {ticket.status === 'waiting' && ahead !== undefined && ahead > 0 && (
             <p className="mt-1 text-xs text-white/40">
-              {aheadCount} {aheadCount === 1 ? 'person' : 'people'} ahead of you
+              {ahead} {ahead === 1 ? 'person' : 'people'} ahead of you
             </p>
           )}
-          {ticket.status === 'waiting' && aheadCount === 0 && (
+          {ticket.status === 'waiting' && ahead === 0 && (
             <p className="mt-1 text-xs font-medium text-amber-400">You&apos;re next!</p>
           )}
         </div>

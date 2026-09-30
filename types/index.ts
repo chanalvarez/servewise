@@ -83,3 +83,10 @@ export interface ActiveTicket extends Ticket {
 export interface StoreWithWait extends Store {
   waitingCount: number
 }
+
+/** Result of the get_queue_snapshot RPC: counts of active tickets (waiting, called,
+ *  no_show, arrived). `ahead` is null when the caller holds no active ticket here. */
+export interface QueueSnapshot {
+  in_queue: number
+  ahead: number | null
+}

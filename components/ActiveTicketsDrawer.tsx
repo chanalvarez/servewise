@@ -1,6 +1,8 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
 import { useActiveTickets } from '@/context/ActiveTicketsContext'
 import { QueueTicket } from '@/components/queue/QueueTicket'
 import { Ticket, ChevronDown, ChevronUp } from 'lucide-react'
@@ -8,6 +10,33 @@ import { Ticket, ChevronDown, ChevronUp } from 'lucide-react'
 export function ActiveTicketsDrawer() {
   const pathname = usePathname()
   const { tickets, isLoading, drawerOpen, setDrawerOpen, removeTicket } = useActiveTickets()
+  const [aheadByTicket, setAheadByTicket] = useState<Record<string, number>>({})
+  const hasTickets = tickets.length > 0
+
+  // Ahead counts come from the DB (RLS hides other customers' tickets). Polled only while
+  // the drawer is open, so it adds no load when closed.
+  useEffect(() => {
+    if (!drawerOpen || !hasTickets) return
+    const supabase = createClient()
+    let cancelled = false
+    const load = async () => {
+      const { data } = await supabase.rpc('my_queue_positions')
+      if (cancelled || !data) return
+      setAheadByTicket(
+        Object.fromEntries(
+          (data as { ticket_id: string; ahead: number }[]).map((r) => [r.ticket_id, r.ahead])
+        )
+      )
+    }
+    void load()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') void load()
+    }, 3000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [drawerOpen, hasTickets])
 
   if (pathname.includes('/staff')) return null
   if (isLoading || tickets.length === 0) return null
@@ -95,6 +124,7 @@ export function ActiveTicketsDrawer() {
                 <QueueTicket
                   key={ticket.id}
                   ticket={ticket}
+                  ahead={aheadByTicket[ticket.id]}
                   onRemove={() => removeTicket(ticket.id)}
                 />
               ))}

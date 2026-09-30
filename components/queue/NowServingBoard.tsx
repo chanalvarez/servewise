@@ -1,19 +1,22 @@
 interface NowServingBoardProps {
   currentServing: number
   queueNumber?: number
-  waitingCount: number
+  inQueue: number
+  /** Active tickets before the viewer in service order; null when the viewer has no ticket */
+  ahead: number | null
+  isWaiting: boolean
 }
 
 export function NowServingBoard({
   currentServing,
   queueNumber,
-  waitingCount,
+  inQueue,
+  ahead,
+  isWaiting,
 }: NowServingBoardProps) {
   const isCalled = queueNumber !== undefined && queueNumber === currentServing
-  const isNext = queueNumber !== undefined && queueNumber === currentServing + 1
-  const aheadCount = queueNumber
-    ? Math.max(0, queueNumber - currentServing - 1)
-    : null
+  const isNext = isWaiting && ahead === 0
+  const aheadCount = queueNumber ? ahead : null
 
   return (
     <div
@@ -60,7 +63,7 @@ export function NowServingBoard({
         }}
       >
         <div className="flex flex-col items-center py-4" style={{ borderRight: '1px solid rgba(255,255,255,0.06)' }}>
-          <p className="text-2xl font-bold tabular-nums text-white">{waitingCount}</p>
+          <p className="text-2xl font-bold tabular-nums text-white">{inQueue}</p>
           <p className="mt-0.5 text-xs text-white/40">in queue</p>
         </div>
 

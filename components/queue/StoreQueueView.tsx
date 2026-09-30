@@ -10,7 +10,7 @@ import { NowServingBoard } from './NowServingBoard'
 import { NoShowCountdown } from './NoShowCountdown'
 import { MissedNoticeScreen } from './MissedNoticeScreen'
 import { VibeStatusBadge } from '@/components/store/VibeStatusBadge'
-import type { Mall, Store, Ticket } from '@/types'
+import type { Mall, Store, Ticket, QueueSnapshot } from '@/types'
 import { AlertDisplay } from '@/components/AlertDisplay'
 import type { AlertState } from '@/components/AlertDisplay'
 import { useAlertSystem } from '@/lib/hooks/useAlertSystem'
@@ -20,12 +20,15 @@ import { exitMissedQueue } from '@/lib/actions/queue'
 interface StoreQueueViewProps {
   store: Store
   mall: Mall
-  initialTickets: Ticket[]
+  initialSnapshot: QueueSnapshot | null
 }
 
-export function StoreQueueView({ store: initialStore, mall, initialTickets }: StoreQueueViewProps) {
+export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: StoreQueueViewProps) {
   const [store, setStore] = useState<Store>(initialStore)
-  const [tickets, setTickets] = useState<Ticket[]>(initialTickets)
+  // in_queue / ahead are computed in the database (get_queue_snapshot) because RLS hides
+  // other customers' tickets from this client.
+  const [snapshot, setSnapshot] = useState<QueueSnapshot | null>(initialSnapshot)
+  const snapshotFetchRef = useRef(0)
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notifStatus, setNotifStatus] = useState<'idle' | 'granted' | 'denied'>('idle')
@@ -66,39 +69,30 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
     if (myTicket?.id) lastTicketIdRef.current = myTicket.id
   }, [myTicket?.id])
 
-  // Total in-queue = all active ticket statuses (waiting + called + no_show).
-  const activeStatuses = ['waiting', 'called', 'no_show'] as const
-  const ticketActiveCount = tickets.filter((t) =>
-    activeStatuses.includes(t.status as typeof activeStatuses[number])
-  ).length
-  const storeQueueCount = Math.max(0, store.last_queue_number - store.current_serving)
-  const waitingCount = Math.max(ticketActiveCount, storeQueueCount)
-
-  // ── Store polling (unconditional — no auth needed) ────────────────────────
-  useEffect(() => {
+  // ── Queue snapshot (store fields + In queue + Ahead) ──────────────────────
+  // One RPC replaces the previous 3s stores select, so request volume is unchanged.
+  // Active = waiting, called, no_show, arrived; ordered by COALESCE(position, queue_number).
+  const refreshSnapshot = useCallback(async () => {
+    const myId = ++snapshotFetchRef.current
     const supabase = createClient()
-    let cancelled = false
-
-    const pollStore = async () => {
-      if (cancelled) return
-      const { data } = await supabase
-        .from('stores')
-        .select('current_serving, last_queue_number, is_open, is_cutoff, vibe_status')
-        .eq('id', store.id)
-        .single()
-      if (data && !cancelled) setStore((prev) => ({ ...prev, ...data }))
-    }
-
-    void pollStore()
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') void pollStore()
-    }, 3000)
-
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
+    const { data } = await supabase.rpc('get_queue_snapshot', { p_store_id: store.id })
+    // Discard out-of-order responses
+    if (myId !== snapshotFetchRef.current) return
+    const row = Array.isArray(data) ? data[0] : data
+    if (!row) return
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { in_queue, ahead, server_now, ...storeFields } = row as QueueSnapshot & Partial<Store> & { server_now: string }
+    setSnapshot({ in_queue, ahead })
+    setStore((prev) => ({ ...prev, ...storeFields }))
   }, [store.id])
+
+  useEffect(() => {
+    void refreshSnapshot()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshSnapshot()
+    }, 3000)
+    return () => clearInterval(id)
+  }, [refreshSnapshot])
 
   // ── Realtime: store updates ───────────────────────────────────────────────
   useEffect(() => {
@@ -115,7 +109,10 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
         .on(
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${store.id}` },
-          (payload) => setStore(payload.new as Store)
+          (payload) => {
+            setStore(payload.new as Store)
+            void refreshSnapshot()
+          }
         )
         .subscribe()
       if (cancelled) { void supabase.removeChannel(ch); return }
@@ -133,20 +130,9 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
       authSub.unsubscribe()
       if (storeChannel) void supabase.removeChannel(storeChannel)
     }
-  }, [store.id])
+  }, [store.id, refreshSnapshot])
 
-  // ── Realtime: tickets — queue board + reinstatement toast detection ───────
-  const refetchTickets = useCallback(() => {
-    const supabase = createClient()
-    supabase
-      .from('tickets')
-      .select('*')
-      .eq('store_id', store.id)
-      .in('status', ['waiting', 'called', 'no_show'])
-      .order('queue_number')
-      .then(({ data }) => setTickets(data ?? []))
-  }, [store.id])
-
+  // ── Realtime: tickets — snapshot refresh + reinstatement toast detection ───────
   useEffect(() => {
     const supabase = createClient()
     let cancelled = false
@@ -159,10 +145,10 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
       const ch = supabase
         .channel(`tickets-view-${store.id}`)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
-          () => refetchTickets()
+          () => void refreshSnapshot()
         )
         .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
-          () => refetchTickets()
+          () => void refreshSnapshot()
         )
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
           (payload) => {
@@ -181,7 +167,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
               setTimeout(() => setShowReinstateToast(false), 5000)
             }
 
-            refetchTickets()
+            void refreshSnapshot()
           }
         )
         .subscribe()
@@ -201,7 +187,7 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
       authSub.unsubscribe()
       if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
     }
-  }, [store.id, refetchTickets])
+  }, [store.id, refreshSnapshot])
 
   // ── Stable AlertDisplay callbacks ─────────────────────────────────────────
   // useCallback ensures these are the same reference across re-renders so they
@@ -331,7 +317,8 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
       case 'missed':
         return null  // handled by MissedNoticeScreen
       case 'waiting': {
-        const ahead = Math.max(0, myTicket.queue_number - store.current_serving - 1)
+        const ahead = snapshot?.ahead
+        if (ahead == null) return null
         return ahead === 0
           ? "You're next — get ready!"
           : `${ahead} ${ahead === 1 ? 'person' : 'people'} ahead of you`
@@ -445,7 +432,9 @@ export function StoreQueueView({ store: initialStore, mall, initialTickets }: St
             <NowServingBoard
               currentServing={store.current_serving}
               queueNumber={myTicket?.queue_number}
-              waitingCount={waitingCount}
+              inQueue={snapshot?.in_queue ?? 0}
+              ahead={myTicket ? snapshot?.ahead ?? null : null}
+              isWaiting={myTicket?.status === 'waiting'}
             />
 
             {/* No-show countdown (5-min window, before transitioning to missed) */}
