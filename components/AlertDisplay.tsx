@@ -147,9 +147,11 @@ export function AlertDisplay({
             <p className="text-sm font-bold text-white">
               It&apos;s your turn! Please return to the store.
             </p>
-            <p className={`text-xs ${theme.sub}`}>Head to the counter now</p>
+            <p className={`text-xs ${theme.sub}`}>
+              {calledAt && calledMs === 0 ? 'Time is up — confirming with the store…' : 'Head to the counter now'}
+            </p>
           </div>
-          {calledAt && (
+          {calledAt && calledMs > 0 && (
             <div className="flex-shrink-0 text-right">
               <p className="text-lg font-black tabular-nums text-white">{fmt(calledMs)}</p>
               <p className={`text-xs ${theme.sub}`}>remaining</p>

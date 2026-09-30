@@ -38,7 +38,6 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
   const { playCalledAlert, playNoShowAlert, playUrgentAlert, requestNotificationPermission, unlockAudio } = useAlertSystem()
 
   const [alertState, setAlertState] = useState<AlertState>('idle')
-  const [calledAt, setCalledAt] = useState<string | null>(null)
   const prevStatusRef = useRef<string | undefined>(undefined)
 
   const [showRating,     setShowRating]     = useState(false)
@@ -192,7 +191,8 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
   // ── Stable AlertDisplay callbacks ─────────────────────────────────────────
   // useCallback ensures these are the same reference across re-renders so they
   // never appear as changed deps inside AlertDisplay's countdown effects.
-  const handleCalledExpired = useCallback(() => setAlertState('noshow'), [])
+  // No handler for the 2-minute countdown reaching zero: the server (pg_cron) owns the
+  // called -> no_show transition, and the UI switches only when the ticket status changes.
 
 
   // ── Status transition effects (alerts, rating, MEQ expiry) ───────────────
@@ -202,7 +202,6 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
     prevStatusRef.current = status
 
     if (status === 'called' && prev !== 'called') {
-      setCalledAt(new Date().toISOString())
       setAlertState('called')
       playCalledAlert()
       requestNotificationPermission()
@@ -332,9 +331,8 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
     <main className="min-h-screen pb-32" style={{ background: 'radial-gradient(ellipse at 20% 20%, rgba(99,102,241,0.15) 0%, transparent 55%), #07091A', backgroundAttachment: 'fixed' }}>
       <AlertDisplay
         alertState={alertState}
-        calledAt={calledAt}
+        calledAt={myTicket?.status === 'called' ? myTicket.called_at : null}
         noShowAt={myTicket?.no_show_triggered_at ?? null}
-        onCalledExpired={handleCalledExpired}
         onTwoMinWarning={playUrgentAlert}
         onThirtySecWarning={playUrgentAlert}
       />

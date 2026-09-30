@@ -42,22 +42,20 @@ export async function callNext(storeId: string) {
   return data
 }
 
-/** Staff: mark the currently-called ticket as a no-show; starts 5-min countdown */
+/** Staff: mark the currently-called ticket as a no-show; starts the no-show countdown.
+ *  Delegates to the mark_no_show() RPC, which shares apply_no_show() with the pg_cron
+ *  auto-trigger (2 minutes after called_at). Only a still-'called' ticket transitions, using
+ *  DB time, so whichever of manual / automatic happens first wins and the other is a no-op. */
 export async function markNoShow(ticketId: string) {
   const supabase = await createClient()
 
-  const { error } = await supabase
-    .from('tickets')
-    .update({
-      status: 'no_show',
-      no_show_triggered_at: new Date().toISOString(),
-    })
-    .eq('id', ticketId)
+  const { error } = await supabase.rpc('mark_no_show', { p_ticket_id: ticketId })
 
   if (error) throw new Error(error.message)
 }
 
-/** Staff: mark a called or no-show ticket as arrived; stamps arrived_at server-side */
+/** Staff: mark a called or no-show ticket as arrived; stamps arrived_at server-side.
+ *  Conditional so a stale click can't resurrect a missed/completed ticket. */
 export async function markArrived(ticketId: string) {
   const supabase = await createClient()
 
@@ -65,6 +63,7 @@ export async function markArrived(ticketId: string) {
     .from('tickets')
     .update({ status: 'arrived', arrived_at: new Date().toISOString() })
     .eq('id', ticketId)
+    .in('status', ['called', 'no_show'])
 
   if (error) throw new Error(error.message)
 }
