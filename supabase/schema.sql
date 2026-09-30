@@ -45,7 +45,7 @@ CREATE TABLE tickets (
   customer_id          UUID          NOT NULL,  -- auth.uid() of the anonymous/named user
   queue_number         INT           NOT NULL,
   status               ticket_status NOT NULL DEFAULT 'waiting',
-  no_show_triggered_at TIMESTAMPTZ,            -- set by staff; drives the 5-min countdown
+  no_show_triggered_at TIMESTAMPTZ,            -- set by staff; drives the no-show countdown (window: app_settings.no_show_minutes, see migrations/003)
   called_at            TIMESTAMPTZ,            -- stamped by call_next() RPC (server time)
   arrived_at           TIMESTAMPTZ,            -- stamped by markArrived server action
   served_at            TIMESTAMPTZ,            -- stamped by markServed server action

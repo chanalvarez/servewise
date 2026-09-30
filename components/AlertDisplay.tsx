@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Bell, AlertTriangle, UserX } from 'lucide-react'
+import { useActiveTickets } from '@/context/ActiveTicketsContext'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -11,7 +12,7 @@ export interface AlertDisplayProps {
   alertState: AlertState
   /** ISO timestamp when ticket became 'called' — drives the 2-min countdown */
   calledAt?: string | null
-  /** ticket.no_show_triggered_at — drives the 5-min countdown */
+  /** ticket.no_show_triggered_at — drives the no-show countdown */
   noShowAt?: string | null
   /** Fired when the 2-min 'called' countdown reaches zero */
   onCalledExpired?: () => void
@@ -26,7 +27,10 @@ export interface AlertDisplayProps {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const TWO_MIN_MS  = 2 * 60 * 1000
-const FIVE_MIN_MS = 5 * 60 * 1000
+// Warning/colour thresholds are fractions of the no-show window: 40% and 10%
+// (= 120 s and 30 s at the default 5-minute window).
+const WARN_FRACTION   = 0.4
+const URGENT_FRACTION = 0.1
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -47,7 +51,8 @@ export function AlertDisplay({
   onThirtySecWarning,
 }: AlertDisplayProps) {
   const [calledMs, setCalledMs] = useState(TWO_MIN_MS)
-  const [noShowMs, setNoShowMs] = useState(FIVE_MIN_MS)
+  const { noShowWindowMs, noShowSettingLoaded } = useActiveTickets()
+  const [noShowMs, setNoShowMs] = useState(noShowWindowMs)
 
   // ── Callback refs ────────────────────────────────────────────────────────────
   // Store all callbacks in refs so countdown effects never need them as deps.
@@ -83,23 +88,23 @@ export function AlertDisplay({
     return () => clearInterval(id)
   }, [alertState, calledAt])
 
-  // 5-minute no-show countdown
-  // Deps: alertState, noShowAt only — callbacks and guards accessed via refs
+  // No-show countdown (window from app_settings)
+  // Deps: alertState, noShowAt, window only — callbacks and guards accessed via refs
   useEffect(() => {
-    if (alertState !== 'noshow' || !noShowAt) return
+    if (alertState !== 'noshow' || !noShowAt || !noShowSettingLoaded) return
 
     const tick = () => {
-      const left = Math.max(0, FIVE_MIN_MS - (Date.now() - new Date(noShowAt).getTime()))
+      const left = Math.max(0, noShowWindowMs - (Date.now() - new Date(noShowAt).getTime()))
       setNoShowMs(left)
 
       // 2-min warning: fires once per noShowAt value (new no-show cycle)
-      if (left <= 120_000 && twoMinFiredKey.current !== noShowAt) {
+      if (left <= noShowWindowMs * WARN_FRACTION && twoMinFiredKey.current !== noShowAt) {
         twoMinFiredKey.current = noShowAt
         onTwoMinWarningRef.current?.()
       }
 
       // 30-sec warning: same keying pattern
-      if (left <= 30_000 && thirtySecFiredKey.current !== noShowAt) {
+      if (left <= noShowWindowMs * URGENT_FRACTION && thirtySecFiredKey.current !== noShowAt) {
         thirtySecFiredKey.current = noShowAt
         onThirtySecWarningRef.current?.()
       }
@@ -110,7 +115,7 @@ export function AlertDisplay({
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [alertState, noShowAt])
+  }, [alertState, noShowAt, noShowWindowMs, noShowSettingLoaded])
 
   if (alertState === 'idle') return null
 
@@ -159,8 +164,8 @@ export function AlertDisplay({
 
   if (alertState === 'noshow') {
     const urgency =
-      noShowMs <= 30_000  ? 'red'
-      : noShowMs <= 120_000 ? 'orange'
+      noShowMs <= noShowWindowMs * URGENT_FRACTION ? 'red'
+      : noShowMs <= noShowWindowMs * WARN_FRACTION ? 'orange'
       : 'yellow'
 
     const theme = {

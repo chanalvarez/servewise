@@ -437,7 +437,7 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
               isWaiting={myTicket?.status === 'waiting'}
             />
 
-            {/* No-show countdown (5-min window, before transitioning to missed) */}
+            {/* No-show countdown (no-show window, before transitioning to missed) */}
             {myTicket?.status === 'no_show' && myTicket.no_show_triggered_at && (
               <div
                 className="flex justify-center rounded-3xl py-8"

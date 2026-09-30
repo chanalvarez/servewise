@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { X, Bell, AlertTriangle } from 'lucide-react'
 import { useAlertSystem } from '@/lib/hooks/useAlertSystem'
+import { useActiveTickets } from '@/context/ActiveTicketsContext'
 
 interface AlertPayload {
   type: 'called' | 'noshow'
@@ -22,6 +23,8 @@ export function GlobalAlertListener() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pathname = usePathname()
   const { playCalledAlert, playNoShowAlert } = useAlertSystem()
+  const { noShowWindowMs } = useActiveTickets()
+  const noShowMinutes = Math.round(noShowWindowMs / 60_000)
 
   const dismiss = useCallback(() => {
     setBanner(null)
@@ -84,7 +87,7 @@ export function GlobalAlertListener() {
               : `⚠️ ${banner.storeName} — No-Show Protocol Active!`}
           </p>
           <p className={`text-xs ${isCalled ? 'text-emerald-100' : 'text-red-100'}`}>
-            {isCalled ? 'Return to the store now.' : 'You have 5 minutes to return or lose your spot.'}
+            {isCalled ? 'Return to the store now.' : `You have ${noShowMinutes} ${noShowMinutes === 1 ? 'minute' : 'minutes'} to return or lose your spot.`}
           </p>
         </div>
         <Link

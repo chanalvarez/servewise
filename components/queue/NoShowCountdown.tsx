@@ -2,23 +2,24 @@
 
 import { useEffect, useState } from 'react'
 import { AlertCircle } from 'lucide-react'
+import { useActiveTickets } from '@/context/ActiveTicketsContext'
 
 interface NoShowCountdownProps {
   triggeredAt: string
   onExpired?: () => void
 }
 
-const FIVE_MINUTES_MS = 5 * 60 * 1000
 const RADIUS = 36
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 
 export function NoShowCountdown({ triggeredAt, onExpired }: NoShowCountdownProps) {
-  const [remainingMs, setRemainingMs] = useState(FIVE_MINUTES_MS)
+  const { noShowWindowMs, noShowSettingLoaded } = useActiveTickets()
+  const [remainingMs, setRemainingMs] = useState(noShowWindowMs)
 
   useEffect(() => {
     const calc = () => {
       const elapsed = Date.now() - new Date(triggeredAt).getTime()
-      const left = Math.max(0, FIVE_MINUTES_MS - elapsed)
+      const left = Math.max(0, noShowWindowMs - elapsed)
       setRemainingMs(left)
       if (left === 0) onExpired?.()
     }
@@ -26,12 +27,15 @@ export function NoShowCountdown({ triggeredAt, onExpired }: NoShowCountdownProps
     calc()
     const timer = setInterval(calc, 1000)
     return () => clearInterval(timer)
-  }, [triggeredAt, onExpired])
+  }, [triggeredAt, onExpired, noShowWindowMs])
+
+  // Avoid flashing the 5-minute fallback before the setting has loaded
+  if (!noShowSettingLoaded) return null
 
   const totalSeconds = Math.ceil(remainingMs / 1000)
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
-  const progress = remainingMs / FIVE_MINUTES_MS
+  const progress = remainingMs / noShowWindowMs
   const dashOffset = CIRCUMFERENCE * (1 - progress)
 
   const colorClass =

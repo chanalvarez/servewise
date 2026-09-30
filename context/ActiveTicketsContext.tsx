@@ -21,7 +21,13 @@ interface ActiveTicketsContextValue {
   setDrawerOpen: (open: boolean) => void
   refreshTickets: () => Promise<void>
   removeTicket: (ticketId: string) => void
+  /** No-show window in ms (app_settings.no_show_minutes; falls back to 5 min) */
+  noShowWindowMs: number
+  /** True once the setting has loaded or the load has failed (fallback applies) */
+  noShowSettingLoaded: boolean
 }
+
+const DEFAULT_NO_SHOW_MINUTES = 5
 
 const ActiveTicketsContext = createContext<ActiveTicketsContextValue | null>(null)
 
@@ -30,6 +36,9 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const supabaseRef = useRef(createClient())
+  const [noShowMinutes, setNoShowMinutes] = useState(DEFAULT_NO_SHOW_MINUTES)
+  const [noShowSettingLoaded, setNoShowSettingLoaded] = useState(false)
+  const noShowWindowMsRef = useRef(DEFAULT_NO_SHOW_MINUTES * 60_000)
   const prevTicketStatusesRef = useRef<Record<string, string>>({})
   // Stale-fetch prevention: incremented on every fetchTickets call.
   // Each call captures its own ID and discards the result if a newer call
@@ -90,6 +99,35 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
       if (myFetchId === fetchCounterRef.current) setIsLoading(false)
     }
   }, [])
+
+  // No-show window setting: one tiny row, read once per page load and when the tab
+  // becomes visible again. Any failure or invalid value falls back to 5 minutes.
+  useEffect(() => {
+    const supabase = supabaseRef.current
+    let cancelled = false
+    const load = async () => {
+      let minutes = DEFAULT_NO_SHOW_MINUTES
+      try {
+        const { data } = await supabase.from('app_settings').select('no_show_minutes').limit(1).maybeSingle()
+        const v = data?.no_show_minutes
+        if (Number.isInteger(v) && v >= 1 && v <= 10) minutes = v
+      } catch {}
+      if (cancelled) return
+      setNoShowMinutes(minutes)
+      setNoShowSettingLoaded(true)
+    }
+    void load()
+    const onVisible = () => { if (document.visibilityState === 'visible') void load() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
+
+  useEffect(() => {
+    noShowWindowMsRef.current = noShowMinutes * 60_000
+  }, [noShowMinutes])
 
   // Bootstrap: sign in anonymously if needed, then load tickets.
   // isLoading stays true until we know for sure whether the user has tickets or not.
@@ -210,9 +248,9 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
           }))
         } catch {}
       } else if (currStatus === 'no_show' && prevStatus !== 'no_show') {
-        // On first load, skip no-show tickets triggered more than 5 minutes ago
+        // On first load, skip no-show tickets triggered longer ago than the no-show window
         const noShowAge = Date.now() - new Date(ticket.no_show_triggered_at ?? ticket.updated_at).getTime()
-        if (isBootstrap && noShowAge > 5 * 60 * 1000) continue
+        if (isBootstrap && noShowAge > noShowWindowMsRef.current) continue
         try {
           localStorage.setItem('servewise_alert', JSON.stringify({
             type: 'noshow',
@@ -248,6 +286,8 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
         setDrawerOpen,
         refreshTickets: fetchTickets,
         removeTicket,
+        noShowWindowMs: noShowMinutes * 60_000,
+        noShowSettingLoaded,
       }}
     >
       {children}

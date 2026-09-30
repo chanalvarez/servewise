@@ -30,14 +30,14 @@ Scan the QR code below with your phone to access ServeWise:
 - **Live tracking** — "Now Serving" board updates in real time without refreshing
 - **Multi-queue** — hold tickets at multiple stores at the same time
 - **Active tickets drawer** — always accessible, floats above every page
-- **No-show countdown** — if called but not present, a 5-minute timer appears before the ticket is voided
+- **No-show countdown** — if called but not present, a no-show timer (5 minutes by default) appears before the ticket moves to the Missed Entry Queue
 - **Queue closed notice** — clear warning when a store has stopped accepting new customers
 
 ### For Staff
 - **Secure login** — email and password, scoped to a single store
 - **Live queue panel** — see all waiting, called, and no-show tickets in real time
 - **Call next** — one tap advances the queue; the previous ticket auto-completes
-- **No-show** — marks the current customer; pg_cron auto-voids the ticket after 5 minutes
+- **No-show** — marks the current customer; pg_cron moves the ticket to the Missed Entry Queue when the no-show window (`app_settings.no_show_minutes`, default 5) ends
 - **Vibe toggle** — broadcast store occupancy (Not Busy / Moderate / Very Busy) to the customer directory
 - **Open / Close** — controls whether the store accepts new queue entries
 - **Queue cutoff** — stops new joins near closing time; customers already in queue are unaffected
@@ -53,7 +53,7 @@ Scan the QR code below with your phone to access ServeWise:
 | Database | Supabase (PostgreSQL) |
 | Auth | Supabase Auth — anonymous for customers, email/password for staff |
 | Real-time | Supabase Realtime (WebSocket) |
-| Scheduled jobs | pg_cron — auto-voids no-show tickets after 5 minutes |
+| Scheduled jobs | pg_cron — moves no-show tickets to the Missed Entry Queue after the no-show window (default 5 minutes) |
 | Deployment | Vercel |
 
 ---
