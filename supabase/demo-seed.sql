@@ -37,7 +37,8 @@ CROSS JOIN (VALUES
   ('Hearth Grill',            'Restaurant',  'L4', '402',  'red',    6, 19),
   ('Sakura Ramen House',      'Restaurant',  'L4', '410',  'green',  4, 14),
   ('Studio Nine Salon',       'Salon',       'L1', '108',  'yellow', 3, 11),
-  ('Snapbox Photo Booth',     'Photo Booth', 'L2', '215',  'green',  1,  3)
+  ('Snapbox Photo Booth',     'Photo Booth', 'L2', '215',  'green',  1,  3),
+  ('Serenity Day Spa',        'Spa and Massage', 'L3', '318', 'green', 2,  4)
 ) AS v(name, cat, fl, unit, vibe, serving, last)
 WHERE m.slug = 'sm-city-demo';
 
@@ -49,6 +50,7 @@ CROSS JOIN (VALUES
   ('Harbor Kitchen',          'Restaurant',  'L4', '401',  'red',    5, 18),
   ('Trattoria Verde',         'Restaurant',  'L4', '405',  'yellow', 4, 10),
   ('Cut & Co. Barber',        'Barber Shop', 'L1', '125',  'green',  2,  5),
-  ('Glow Nail Studio',        'Salon',       'L1', '130',  'green',  1,  4)
+  ('Glow Nail Studio',        'Salon',       'L1', '130',  'green',  1,  4),
+  ('Bamboo Touch Massage',    'Spa and Massage', 'L3', '322', 'yellow', 3,  7)
 ) AS v(name, cat, fl, unit, vibe, serving, last)
 WHERE m.slug = 'ayala-demo';
