@@ -41,10 +41,11 @@ export function StoreDirectory({ mall, initialStores }: StoreDirectoryProps) {
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'stores', filter: `mall_id=eq.${mall.id}` },
         (payload) => {
+          const next = payload.new as Store
           setStores((prev) =>
-            prev.map((s) =>
-              s.id === (payload.new as Store).id ? (payload.new as Store) : s
-            )
+            next.is_active === false
+              ? prev.filter((s) => s.id !== next.id)
+              : prev.map((s) => (s.id === next.id ? next : s))
           )
         }
       )

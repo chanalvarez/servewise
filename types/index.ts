@@ -34,6 +34,7 @@ export interface Store {
   last_queue_number: number
   is_open: boolean
   is_cutoff: boolean
+  is_active: boolean
   ewt_minutes: number | null
   created_at: string
 }

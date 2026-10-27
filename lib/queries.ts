@@ -31,7 +31,7 @@ export const getMall = unstable_cache(
 
 export const getStores = unstable_cache(
   async (mallId: string): Promise<Store[]> => {
-    const { data } = await anon().from('stores').select('*').eq('mall_id', mallId).order('name')
+    const { data } = await anon().from('stores').select('*').eq('mall_id', mallId).eq('is_active', true).order('name')
     return (data ?? []) as Store[]
   },
   ['stores'],
@@ -40,7 +40,7 @@ export const getStores = unstable_cache(
 
 export const getStore = unstable_cache(
   async (storeId: string): Promise<Store | null> => {
-    const { data } = await anon().from('stores').select('*').eq('id', storeId).single()
+    const { data } = await anon().from('stores').select('*').eq('id', storeId).eq('is_active', true).single()
     return data as Store | null
   },
   ['store'],

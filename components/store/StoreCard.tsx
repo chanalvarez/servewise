@@ -7,32 +7,16 @@ import { Users } from 'lucide-react'
 import type { Store } from '@/types'
 
 const CATEGORY_BG: Record<string, string> = {
-  'Café':               'rgba(180,83,9,0.5)',
   'Restaurant':         'rgba(190,18,60,0.5)',
-  'Fast Food':          'rgba(194,65,12,0.5)',
-  'Book Store':         'rgba(3,105,161,0.5)',
-  'Electronics':        'rgba(51,65,85,0.6)',
-  'Clothing':           'rgba(109,40,217,0.5)',
-  'Sports':             'rgba(6,95,70,0.5)',
-  'Sports Shop':        'rgba(6,95,70,0.5)',
   'Car Accessories':    'rgba(63,63,70,0.6)',
-  'Health and Beauty':  'rgba(157,23,77,0.5)',
   'Photo Booth':        'rgba(112,26,117,0.5)',
   'Barber Shop':        'rgba(87,83,78,0.6)',
   'Salon':              'rgba(159,18,57,0.5)',
 }
 
 const CATEGORY_BORDER: Record<string, string> = {
-  'Café':               'rgba(251,191,36,0.3)',
   'Restaurant':         'rgba(251,113,133,0.3)',
-  'Fast Food':          'rgba(251,146,60,0.3)',
-  'Book Store':         'rgba(56,189,248,0.3)',
-  'Electronics':        'rgba(148,163,184,0.3)',
-  'Clothing':           'rgba(196,181,253,0.3)',
-  'Sports':             'rgba(52,211,153,0.3)',
-  'Sports Shop':        'rgba(52,211,153,0.3)',
   'Car Accessories':    'rgba(161,161,170,0.3)',
-  'Health and Beauty':  'rgba(249,168,212,0.3)',
   'Photo Booth':        'rgba(232,121,249,0.3)',
   'Barber Shop':        'rgba(214,211,209,0.3)',
   'Salon':              'rgba(253,164,175,0.3)',

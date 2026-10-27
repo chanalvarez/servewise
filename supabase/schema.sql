@@ -35,6 +35,7 @@ CREATE TABLE stores (
   last_queue_number INT         NOT NULL DEFAULT 0,
   is_open           BOOLEAN     NOT NULL DEFAULT true,
   is_cutoff         BOOLEAN     NOT NULL DEFAULT false,  -- staff blocks new queue entries near closing
+  is_active         BOOLEAN     NOT NULL DEFAULT true,   -- false = retired from the catalog (hidden everywhere, rows kept)
   ewt_minutes       INT,                                 -- rolling avg of last 3 service durations; updated by markServed
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
