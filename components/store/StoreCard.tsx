@@ -12,6 +12,7 @@ const CATEGORY_BG: Record<string, string> = {
   'Photo Booth':        'rgba(112,26,117,0.5)',
   'Barber Shop':        'rgba(87,83,78,0.6)',
   'Salon':              'rgba(159,18,57,0.5)',
+  'Spa and Massage':    'rgba(15,118,110,0.55)',
 }
 
 const CATEGORY_BORDER: Record<string, string> = {
@@ -20,6 +21,7 @@ const CATEGORY_BORDER: Record<string, string> = {
   'Photo Booth':        'rgba(232,121,249,0.3)',
   'Barber Shop':        'rgba(214,211,209,0.3)',
   'Salon':              'rgba(253,164,175,0.3)',
+  'Spa and Massage':    'rgba(45,212,191,0.3)',
 }
 
 const VIBE_DOT: Record<string, string> = {
