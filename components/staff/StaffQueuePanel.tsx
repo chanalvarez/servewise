@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useRealtimeSubscription } from '@/lib/hooks/useRealtimeSubscription'
-import { RealtimeStatusBadge } from '@/components/RealtimeStatusBadge'
 import { createCoalescer } from '@/lib/utils/coalesce'
 import { callNext, markNoShow, markArrived, markServed } from '@/lib/actions/queue'
 import { NoShowCountdown } from '@/components/queue/NoShowCountdown'
@@ -71,7 +70,7 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
   // ── Realtime: one channel (tickets of this store + this store row) ───────────
   // Uses the cookie client, which holds the staff session. Reconnect with backoff, resync
   // on visible/online, and polling only while disconnected are handled by the hook.
-  const realtimeStatus = useRealtimeSubscription({
+  useRealtimeSubscription({
     name: `staff-queue-${storeId}`,
     onSync: refetch,
     bindings: [
@@ -128,10 +127,6 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <RealtimeStatusBadge status={realtimeStatus} />
-      </div>
-
       {/* Live stats bar */}
       <div
         className="grid grid-cols-3 divide-x divide-white/[0.06] rounded-2xl"

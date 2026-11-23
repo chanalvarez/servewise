@@ -7,7 +7,6 @@ import { createClient } from '@/lib/supabase/client'
 import { createCoalescer } from '@/lib/utils/coalesce'
 import { withRetry } from '@/lib/supabase/resilient'
 import { useRealtimeSubscription } from '@/lib/hooks/useRealtimeSubscription'
-import { RealtimeStatusBadge } from '@/components/RealtimeStatusBadge'
 import { useActiveTickets } from '@/context/ActiveTicketsContext'
 import { NowServingBoard } from './NowServingBoard'
 import { NoShowCountdown } from './NoShowCountdown'
@@ -36,7 +35,7 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
   const [error, setError] = useState<string | null>(null)
   const [notifStatus, setNotifStatus] = useState<'idle' | 'granted' | 'denied'>('idle')
 
-  const { tickets: activeTickets, isLoading: ticketsLoading, refreshTickets, setDrawerOpen, realtimeStatus: ticketsRealtime } = useActiveTickets()
+  const { tickets: activeTickets, isLoading: ticketsLoading, refreshTickets, setDrawerOpen } = useActiveTickets()
 
   const { playCalledAlert, playNoShowAlert, playUrgentAlert, requestNotificationPermission, unlockAudio } = useAlertSystem()
 
@@ -94,7 +93,7 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
   const refreshCoalesced = useMemo(() => createCoalescer(() => void refreshSnapshot(), 1000), [refreshSnapshot])
   useEffect(() => () => refreshCoalesced.cancel(), [refreshCoalesced])
 
-  const storeRealtime = useRealtimeSubscription({
+  useRealtimeSubscription({
     name: `store-view-${store.id}`,
     onSync: refreshCoalesced,
     bindings: [
@@ -109,12 +108,6 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
       },
     ],
   })
-  const realtimeStatus = storeRealtime === 'live' && ticketsRealtime === 'live'
-    ? 'live'
-    : storeRealtime === 'reconnecting' || ticketsRealtime === 'reconnecting'
-      ? 'reconnecting'
-      : 'connecting'
-
   // ── Own ticket changed → refresh In queue / Ahead ──────────────────────────
   // Under RLS a customer only receives events for their own ticket, so the old per-store
   // tickets channel duplicated ActiveTicketsContext's. The context already delivers those
@@ -327,10 +320,7 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
               </div>
             </div>
 
-            <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
-              <VibeStatusBadge status={store.vibe_status} />
-              <RealtimeStatusBadge status={realtimeStatus} />
-            </div>
+            <VibeStatusBadge status={store.vibe_status} />
           </div>
         </div>
       </div>
