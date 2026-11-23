@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { LogOut, Loader2 } from 'lucide-react'
 
@@ -11,14 +10,22 @@ interface StaffSignOutButtonProps {
 
 export function StaffSignOutButton({ mallSlug }: StaffSignOutButtonProps) {
   const [loading, setLoading] = useState(false)
-  const router = useRouter()
 
   const handleSignOut = async () => {
     setLoading(true)
     const supabase = createClient()
-    await supabase.auth.signOut()
-    router.push(`/${mallSlug}`)
-    router.refresh()
+    try {
+      // 'local' clears the session without a server round trip; the race caps any stall at 2s
+      await Promise.race([
+        supabase.auth.signOut({ scope: 'local' }),
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ])
+    } catch {
+      // ignore — we navigate away regardless
+    }
+    // Hard navigation drops all in-memory auth state and avoids racing with the
+    // SIGNED_OUT redirect in StaffQueuePanel
+    window.location.assign(`/${mallSlug}`)
   }
 
   return (

@@ -173,9 +173,9 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
 
     const {
       data: { subscription: authSub },
-    } = supabase.auth.onAuthStateChange(async (event) => {
+    } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
-        await syncRealtimeAuth(supabase)
+        setTimeout(() => void syncRealtimeAuth(supabase), 0)
       }
     })
 

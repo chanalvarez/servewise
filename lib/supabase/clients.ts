@@ -7,6 +7,9 @@ export const supabaseRealtime = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   {
+    // These clients never hold a session (auth lives in the cookie client), so keep them
+    // off the shared auth-token lock that would otherwise block sign-in / sign-out.
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     realtime: {
       params: { eventsPerSecond: 10 },
     },
@@ -21,6 +24,7 @@ export const supabaseQuery = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     realtime: {
       params: { eventsPerSecond: 0 },
     },

@@ -1,12 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter, useParams } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Layers, Loader2, Lock } from 'lucide-react'
 
 export default function StaffLoginPage() {
-  const router = useRouter()
   const params = useParams<{ mallSlug: string; storeId: string }>()
 
   const [email, setEmail] = useState('')
@@ -32,9 +31,9 @@ export default function StaffLoginPage() {
       return
     }
 
-    // Redirect back to the staff dashboard
-    router.push(`/${params.mallSlug}/${params.storeId}/staff`)
-    router.refresh()
+    // Hard navigation so the server renders with the fresh session cookies
+    // (router.push + refresh can stall behind in-flight auth work)
+    window.location.assign(`/${params.mallSlug}/${params.storeId}/staff`)
   }
 
   return (

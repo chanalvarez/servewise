@@ -82,8 +82,8 @@ export function MissedQueueTab({ storeId, activated }: MissedQueueTabProps) {
 
     void subscribe()
 
-    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange(async (event) => {
-      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') await syncRealtimeAuth(supabase)
+    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') setTimeout(() => void syncRealtimeAuth(supabase), 0)
     })
 
     return () => {
