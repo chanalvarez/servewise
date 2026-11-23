@@ -5,6 +5,7 @@ import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { supabaseRealtime } from '@/lib/supabase/clients'
 import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
+import { createCoalescer } from '@/lib/utils/coalesce'
 import { callNext, markNoShow, markArrived, markServed } from '@/lib/actions/queue'
 import { NoShowCountdown } from '@/components/queue/NoShowCountdown'
 import { SkipForward, AlertTriangle, CheckCircle, CheckCircle2, Users } from 'lucide-react'
@@ -101,6 +102,9 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
         })
     }
 
+    // Bursts of ticket events (e.g. several joins at once) cause one refetch per second at most
+    const refetch = createCoalescer(() => void refetchStoreData(), 1000)
+
     const subscribe = async () => {
       await syncRealtimeAuth(supabase)
       if (cancelled) return
@@ -127,7 +131,7 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
                 const already = prev.some((t) => t.id === (payload.new as Ticket).id)
                 return already ? prev : [...prev, payload.new as Ticket]
               })
-              void refetchStoreData()
+              refetch()
             } else if (payload.eventType === 'UPDATE') {
               setTickets((prev) =>
                 prev.map((t) =>
@@ -142,7 +146,7 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
         .subscribe(async (status, err) => {
           console.log('[REALTIME] tickets subscription status:', status)
           if (err) console.error('[REALTIME] tickets subscription error:', err)
-          if (status === 'SUBSCRIBED') void refetchStoreData()
+          if (status === 'SUBSCRIBED') refetch()
         })
 
       storeChannel = supabase
@@ -181,6 +185,7 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
 
     return () => {
       cancelled = true
+      refetch.cancel()
       authSub.unsubscribe()
       if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
       if (storeChannel) void supabase.removeChannel(storeChannel)

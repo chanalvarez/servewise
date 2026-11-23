@@ -79,7 +79,8 @@ export function StaffDashboardTabs({
 
       {/* Missed — always mounted once activated, hidden via style */}
       <div style={{ display: tab === 'missed' ? 'block' : 'none' }}>
-        <MissedQueueTab storeId={storeId} activated={missedActivated} />
+        {/* Live only while this tab is the visible one; re-fetches when you return to it */}
+        <MissedQueueTab storeId={storeId} activated={missedActivated && tab === 'missed'} />
       </div>
 
       {/* Analytics — always mounted, hidden via inline style */}

@@ -12,6 +12,7 @@ import {
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
+import { createCoalescer } from '@/lib/utils/coalesce'
 import type { ActiveTicket } from '@/types'
 
 interface ActiveTicketsContextValue {
@@ -34,6 +35,9 @@ const ActiveTicketsContext = createContext<ActiveTicketsContextValue | null>(nul
 export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
   const [tickets, setTickets] = useState<ActiveTicket[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  // Current auth user id; drives the per-customer Realtime filter below
+  const [userId, setUserId] = useState<string | null>(null)
+  const ticketsRef = useRef<ActiveTicket[]>([])
   const [drawerOpen, setDrawerOpen] = useState(false)
   const supabaseRef = useRef(createClient())
   const [noShowMinutes, setNoShowMinutes] = useState(DEFAULT_NO_SHOW_MINUTES)
@@ -129,6 +133,10 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
     noShowWindowMsRef.current = noShowMinutes * 60_000
   }, [noShowMinutes])
 
+  useEffect(() => {
+    ticketsRef.current = tickets
+  }, [tickets])
+
   // Bootstrap: sign in anonymously if needed, then load tickets.
   // isLoading stays true until we know for sure whether the user has tickets or not.
   // This prevents the Join button from flashing for users who already have a ticket.
@@ -137,7 +145,8 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      setUserId(session?.user?.id ?? null)
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         // fetchTickets sets isLoading(false) in its finally block
         fetchTickets()
@@ -149,6 +158,7 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
     const safetyTimer = setTimeout(() => setIsLoading(false), 4000)
 
     supabase.auth.getSession().then(({ data: { session } }) => {
+      setUserId(session?.user?.id ?? null)
       if (!session) {
         if (!isStaffPage) {
           // signInAnonymously triggers SIGNED_IN → fetchTickets → isLoading(false)
@@ -171,22 +181,41 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
     }
   }, [fetchTickets, isStaffPage])
 
-  // Global realtime subscription — re-fetch on any ticket change affecting this customer
+  // Realtime: only this customer's own ticket rows (filtered by customer_id), and not on staff
+  // pages (staff have no customer tickets). An unfiltered subscription makes Realtime run the
+  // RLS check for every ticket change in the system against every connected customer.
+  // DELETE events cannot be filtered by column, so that binding only refetches when the
+  // deleted id is one of the tickets we hold.
   useEffect(() => {
+    if (isStaffPage || !userId) return
     const supabase = supabaseRef.current
     let cancelled = false
     let channel: ReturnType<typeof supabase.channel> | null = null
+    const refetch = createCoalescer(() => void fetchTickets(), 1000)
 
     const setup = async () => {
       await syncRealtimeAuth(supabase)
       if (cancelled) return
 
       const ch = supabase
-        .channel('active-tickets-global')
+        .channel(`active-tickets-${userId}`)
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'tickets' },
-          () => fetchTickets()
+          { event: 'INSERT', schema: 'public', table: 'tickets', filter: `customer_id=eq.${userId}` },
+          refetch
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'tickets', filter: `customer_id=eq.${userId}` },
+          refetch
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'tickets' },
+          (payload) => {
+            const id = (payload.old as { id?: string } | undefined)?.id
+            if (id && ticketsRef.current.some((t) => t.id === id)) refetch()
+          }
         )
         .subscribe()
       if (cancelled) {
@@ -208,10 +237,11 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true
+      refetch.cancel()
       authSub.unsubscribe()
       if (channel) void supabase.removeChannel(channel)
     }
-  }, [fetchTickets])
+  }, [fetchTickets, isStaffPage, userId])
 
   // Fallback when Realtime events don't arrive (same RLS/socket issue as staff)
   useEffect(() => {

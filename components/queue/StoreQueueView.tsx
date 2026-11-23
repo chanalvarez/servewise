@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ArrowLeft, Loader2, MapPin, LogIn, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
+import { createCoalescer } from '@/lib/utils/coalesce'
 import { useActiveTickets } from '@/context/ActiveTicketsContext'
 import { NowServingBoard } from './NowServingBoard'
 import { NoShowCountdown } from './NoShowCountdown'
@@ -51,17 +52,10 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
   const missedTriggeredRef = useRef(false)
 
   // ── Reinstatement toast ───────────────────────────────────────────────────
-  const [showReinstateToast,    setShowReinstateToast]    = useState(false)
-  const shownReinstateToastsRef = useRef<Set<string>>(new Set())
-  // Ref so Realtime callbacks always see the current myTicket without stale closure
-  const myTicketRef = useRef<(typeof activeTickets)[0] | undefined>(undefined)
+  const [showReinstateToast] = useState(false)
 
   // My ticket for this store (from global context)
   const myTicket = activeTickets.find((t) => t.store.id === store.id)
-
-  useEffect(() => {
-    myTicketRef.current = myTicket
-  }, [myTicket])
 
   // Keep lastTicketIdRef current so the rating overlay can submit after the ticket disappears
   useEffect(() => {
@@ -98,6 +92,8 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
     const supabase = createClient()
     let cancelled = false
     let storeChannel: ReturnType<typeof supabase.channel> | null = null
+    // A burst of store updates (joins + calls) triggers at most one snapshot RPC per second
+    const refresh = createCoalescer(() => void refreshSnapshot(), 1000)
 
     const setup = async () => {
       await syncRealtimeAuth(supabase)
@@ -110,7 +106,7 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
           { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${store.id}` },
           (payload) => {
             setStore(payload.new as Store)
-            void refreshSnapshot()
+            refresh()
           }
         )
         .subscribe()
@@ -120,73 +116,26 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
 
     void setup()
 
-    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange(async (event) => {
-      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') await syncRealtimeAuth(supabase)
+    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') setTimeout(() => void syncRealtimeAuth(supabase), 0)
     })
 
     return () => {
       cancelled = true
+      refresh.cancel()
       authSub.unsubscribe()
       if (storeChannel) void supabase.removeChannel(storeChannel)
     }
   }, [store.id, refreshSnapshot])
 
-  // ── Realtime: tickets — snapshot refresh + reinstatement toast detection ───────
+  // ── Own ticket changed → refresh In queue / Ahead ──────────────────────────
+  // Under RLS a customer only receives events for their own ticket, so the old per-store
+  // tickets channel duplicated ActiveTicketsContext's. The context already delivers those
+  // changes; here we just re-read the snapshot when this store's ticket changes.
+  const myTicketVersion = myTicket ? `${myTicket.id}:${myTicket.status}:${myTicket.updated_at}` : ''
   useEffect(() => {
-    const supabase = createClient()
-    let cancelled = false
-    let ticketsChannel: ReturnType<typeof supabase.channel> | null = null
-
-    const setup = async () => {
-      await syncRealtimeAuth(supabase)
-      if (cancelled) return
-
-      const ch = supabase
-        .channel(`tickets-view-${store.id}`)
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
-          () => void refreshSnapshot()
-        )
-        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
-          () => void refreshSnapshot()
-        )
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tickets', filter: `store_id=eq.${store.id}` },
-          (payload) => {
-            const updated = payload.new as Ticket
-            const current = myTicketRef.current
-
-            // Reinstatement toast: fire when reinstated=true, the viewer is waiting, not their own ticket
-            if (
-              updated.reinstated === true &&
-              current?.status === 'waiting' &&
-              current?.id !== updated.id &&
-              !shownReinstateToastsRef.current.has(updated.id)
-            ) {
-              shownReinstateToastsRef.current.add(updated.id)
-              setShowReinstateToast(true)
-              setTimeout(() => setShowReinstateToast(false), 5000)
-            }
-
-            void refreshSnapshot()
-          }
-        )
-        .subscribe()
-
-      if (cancelled) { void supabase.removeChannel(ch); return }
-      ticketsChannel = ch
-    }
-
-    void setup()
-
-    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange(async (event) => {
-      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') await syncRealtimeAuth(supabase)
-    })
-
-    return () => {
-      cancelled = true
-      authSub.unsubscribe()
-      if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
-    }
-  }, [store.id, refreshSnapshot])
+    if (myTicketVersion) void refreshSnapshot()
+  }, [myTicketVersion, refreshSnapshot])
 
   // ── Stable AlertDisplay callbacks ─────────────────────────────────────────
   // useCallback ensures these are the same reference across re-renders so they
