@@ -1,11 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Loader2, MapPin, LogIn, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
 import { createCoalescer } from '@/lib/utils/coalesce'
+import { withRetry } from '@/lib/supabase/resilient'
+import { useRealtimeSubscription } from '@/lib/hooks/useRealtimeSubscription'
+import { RealtimeStatusBadge } from '@/components/RealtimeStatusBadge'
 import { useActiveTickets } from '@/context/ActiveTicketsContext'
 import { NowServingBoard } from './NowServingBoard'
 import { NoShowCountdown } from './NoShowCountdown'
@@ -34,7 +36,7 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
   const [error, setError] = useState<string | null>(null)
   const [notifStatus, setNotifStatus] = useState<'idle' | 'granted' | 'denied'>('idle')
 
-  const { tickets: activeTickets, isLoading: ticketsLoading, refreshTickets, setDrawerOpen } = useActiveTickets()
+  const { tickets: activeTickets, isLoading: ticketsLoading, refreshTickets, setDrawerOpen, realtimeStatus: ticketsRealtime } = useActiveTickets()
 
   const { playCalledAlert, playNoShowAlert, playUrgentAlert, requestNotificationPermission, unlockAudio } = useAlertSystem()
 
@@ -68,7 +70,9 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
   const refreshSnapshot = useCallback(async () => {
     const myId = ++snapshotFetchRef.current
     const supabase = createClient()
-    const { data } = await supabase.rpc('get_queue_snapshot', { p_store_id: store.id })
+    const { data } = await withRetry((signal) =>
+      supabase.rpc('get_queue_snapshot', { p_store_id: store.id }).abortSignal(signal)
+    )
     // Discard out-of-order responses
     if (myId !== snapshotFetchRef.current) return
     const row = Array.isArray(data) ? data[0] : data
@@ -79,54 +83,37 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
     setStore((prev) => ({ ...prev, ...storeFields }))
   }, [store.id])
 
+  // Initial load only; refreshes after that come from the store channel below, which also
+  // resyncs on every (re)subscribe / tab-visible / online and polls only while disconnected.
   useEffect(() => {
     void refreshSnapshot()
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') void refreshSnapshot()
-    }, 3000)
-    return () => clearInterval(id)
   }, [refreshSnapshot])
 
   // ── Realtime: store updates ───────────────────────────────────────────────
-  useEffect(() => {
-    const supabase = createClient()
-    let cancelled = false
-    let storeChannel: ReturnType<typeof supabase.channel> | null = null
-    // A burst of store updates (joins + calls) triggers at most one snapshot RPC per second
-    const refresh = createCoalescer(() => void refreshSnapshot(), 1000)
+  // A burst of store updates (joins + calls) triggers at most one snapshot RPC per second.
+  const refreshCoalesced = useMemo(() => createCoalescer(() => void refreshSnapshot(), 1000), [refreshSnapshot])
+  useEffect(() => () => refreshCoalesced.cancel(), [refreshCoalesced])
 
-    const setup = async () => {
-      await syncRealtimeAuth(supabase)
-      if (cancelled) return
-
-      const ch = supabase
-        .channel(`store-view-${store.id}`)
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${store.id}` },
-          (payload) => {
-            setStore(payload.new as Store)
-            refresh()
-          }
-        )
-        .subscribe()
-      if (cancelled) { void supabase.removeChannel(ch); return }
-      storeChannel = ch
-    }
-
-    void setup()
-
-    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') setTimeout(() => void syncRealtimeAuth(supabase), 0)
-    })
-
-    return () => {
-      cancelled = true
-      refresh.cancel()
-      authSub.unsubscribe()
-      if (storeChannel) void supabase.removeChannel(storeChannel)
-    }
-  }, [store.id, refreshSnapshot])
+  const storeRealtime = useRealtimeSubscription({
+    name: `store-view-${store.id}`,
+    onSync: refreshCoalesced,
+    bindings: [
+      {
+        event: 'UPDATE',
+        table: 'stores',
+        filter: `id=eq.${store.id}`,
+        handler: (payload) => {
+          setStore(payload.new as Store)
+          refreshCoalesced()
+        },
+      },
+    ],
+  })
+  const realtimeStatus = storeRealtime === 'live' && ticketsRealtime === 'live'
+    ? 'live'
+    : storeRealtime === 'reconnecting' || ticketsRealtime === 'reconnecting'
+      ? 'reconnecting'
+      : 'connecting'
 
   // ── Own ticket changed → refresh In queue / Ahead ──────────────────────────
   // Under RLS a customer only receives events for their own ticket, so the old per-store
@@ -229,7 +216,12 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
         }
       }
 
-      const { error } = await supabase.rpc('join_queue', { p_store_id: store.id })
+      // Retried on network error / timeout / 5xx. Safe: join_queue locks the store row and raises
+      // 'Already in queue' if an earlier attempt actually reached the server (handled below).
+      const { error } = await withRetry(
+        (signal) => supabase.rpc('join_queue', { p_store_id: store.id }).abortSignal(signal),
+        { attempts: 3, timeoutMs: 10000 }
+      )
 
       if (error) {
         if (error.message.toLowerCase().includes('already in queue')) {
@@ -335,7 +327,10 @@ export function StoreQueueView({ store: initialStore, mall, initialSnapshot }: S
               </div>
             </div>
 
-            <VibeStatusBadge status={store.vibe_status} />
+            <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
+              <VibeStatusBadge status={store.vibe_status} />
+              <RealtimeStatusBadge status={realtimeStatus} />
+            </div>
           </div>
         </div>
       </div>

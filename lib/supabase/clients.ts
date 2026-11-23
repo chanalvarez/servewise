@@ -1,21 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Dedicated client for Supabase Realtime channels (Queue tab only).
-// Isolated so that real-time WebSocket traffic cannot block HTTP
-// data-fetch requests made on supabaseQuery.
-export const supabaseRealtime = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  {
-    // These clients never hold a session (auth lives in the cookie client), so keep them
-    // off the shared auth-token lock that would otherwise block sign-in / sign-out.
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    realtime: {
-      params: { eventsPerSecond: 10 },
-    },
-  }
-)
-
 // Dedicated client for regular data queries (Analytics and any
 // non-realtime fetch). Real-time eventsPerSecond is set to 0
 // so this client never opens a WebSocket, eliminating any chance that

@@ -5,13 +5,14 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
+import { useRealtimeSubscription, type RealtimeStatus } from '@/lib/hooks/useRealtimeSubscription'
 import { createCoalescer } from '@/lib/utils/coalesce'
 import type { ActiveTicket } from '@/types'
 
@@ -21,6 +22,8 @@ interface ActiveTicketsContextValue {
   drawerOpen: boolean
   setDrawerOpen: (open: boolean) => void
   refreshTickets: () => Promise<void>
+  /** Status of this customer's own-ticket Realtime subscription */
+  realtimeStatus: RealtimeStatus
   removeTicket: (ticketId: string) => void
   /** No-show window in ms (app_settings.no_show_minutes; falls back to 5 min) */
   noShowWindowMs: number
@@ -185,72 +188,28 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
   // pages (staff have no customer tickets). An unfiltered subscription makes Realtime run the
   // RLS check for every ticket change in the system against every connected customer.
   // DELETE events cannot be filtered by column, so that binding only refetches when the
-  // deleted id is one of the tickets we hold.
-  useEffect(() => {
-    if (isStaffPage || !userId) return
-    const supabase = supabaseRef.current
-    let cancelled = false
-    let channel: ReturnType<typeof supabase.channel> | null = null
-    const refetch = createCoalescer(() => void fetchTickets(), 1000)
+  // deleted id is one of the tickets we hold. Reconnect/backoff, resync on visible/online,
+  // and fallback polling (only while disconnected) live in useRealtimeSubscription.
+  const refetch = useMemo(() => createCoalescer(() => void fetchTickets(), 1000), [fetchTickets])
+  useEffect(() => () => refetch.cancel(), [refetch])
 
-    const setup = async () => {
-      await syncRealtimeAuth(supabase)
-      if (cancelled) return
-
-      const ch = supabase
-        .channel(`active-tickets-${userId}`)
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'tickets', filter: `customer_id=eq.${userId}` },
-          refetch
-        )
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'tickets', filter: `customer_id=eq.${userId}` },
-          refetch
-        )
-        .on(
-          'postgres_changes',
-          { event: 'DELETE', schema: 'public', table: 'tickets' },
-          (payload) => {
-            const id = (payload.old as { id?: string } | undefined)?.id
-            if (id && ticketsRef.current.some((t) => t.id === id)) refetch()
-          }
-        )
-        .subscribe()
-      if (cancelled) {
-        void supabase.removeChannel(ch)
-        return
-      }
-      channel = ch
-    }
-
-    void setup()
-
-    const {
-      data: { subscription: authSub },
-    } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
-        setTimeout(() => void syncRealtimeAuth(supabase), 0)
-      }
-    })
-
-    return () => {
-      cancelled = true
-      refetch.cancel()
-      authSub.unsubscribe()
-      if (channel) void supabase.removeChannel(channel)
-    }
-  }, [fetchTickets, isStaffPage, userId])
-
-  // Fallback when Realtime events don't arrive (same RLS/socket issue as staff)
-  useEffect(() => {
-    if (isStaffPage) return
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') void fetchTickets()
-    }, 3000)
-    return () => clearInterval(id)
-  }, [fetchTickets, isStaffPage])
+  const realtimeStatus = useRealtimeSubscription({
+    name: `active-tickets-${userId ?? 'anon'}`,
+    enabled: !isStaffPage && !!userId,
+    onSync: refetch,
+    bindings: [
+      { event: 'INSERT', table: 'tickets', filter: `customer_id=eq.${userId}`, handler: refetch },
+      { event: 'UPDATE', table: 'tickets', filter: `customer_id=eq.${userId}`, handler: refetch },
+      {
+        event: 'DELETE',
+        table: 'tickets',
+        handler: (payload) => {
+          const id = (payload.old as { id?: string } | undefined)?.id
+          if (id && ticketsRef.current.some((t) => t.id === id)) refetch()
+        },
+      },
+    ],
+  })
 
   // Detect ticket status transitions and write cross-page alerts to localStorage.
   // Lives here (always-mounted root context) so it fires even when the customer
@@ -315,6 +274,7 @@ export function ActiveTicketsProvider({ children }: { children: ReactNode }) {
         drawerOpen,
         setDrawerOpen,
         refreshTickets: fetchTickets,
+        realtimeStatus,
         removeTicket,
         noShowWindowMs: noShowMinutes * 60_000,
         noShowSettingLoaded,

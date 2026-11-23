@@ -1,8 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { supabaseRealtime } from '@/lib/supabase/clients'
-import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
+import { createClient } from '@/lib/supabase/client'
+import { useRealtimeSubscription } from '@/lib/hooks/useRealtimeSubscription'
 import { reinstateEntry, removeMissedEntry } from '@/lib/actions/queue'
 import { MEQCountdown } from '@/components/queue/MEQCountdown'
 import { RotateCcw, Trash2, Users } from 'lucide-react'
@@ -30,7 +30,7 @@ export function MissedQueueTab({ storeId, activated }: MissedQueueTabProps) {
   const [fetched,       setFetched]       = useState(false)
 
   const fetchMissed = useCallback(async () => {
-    const supabase = supabaseRealtime
+    const supabase = createClient()
     const { data } = await supabase
       .from('tickets')
       .select('*')
@@ -41,57 +41,25 @@ export function MissedQueueTab({ storeId, activated }: MissedQueueTabProps) {
     setFetched(true)
   }, [storeId])
 
-  // Initial fetch + polling once the tab is activated
+  // Live only while the tab is active (the parent passes activated && visible). The hook
+  // refetches on every (re)subscribe / tab-visible / online and polls only while disconnected.
+  useRealtimeSubscription({
+    name: `staff-missed-${storeId}`,
+    enabled: activated,
+    onSync: () => void fetchMissed(),
+    bindings: [
+      {
+        event: '*',
+        table: 'tickets',
+        filter: `store_id=eq.${storeId}`,
+        handler: () => void fetchMissed(),
+      },
+    ],
+  })
+
   useEffect(() => {
-    if (!activated) return
-    void fetchMissed()
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') void fetchMissed()
-    }, 5000)
-    return () => clearInterval(id)
+    if (activated) void fetchMissed()
   }, [activated, fetchMissed])
-
-  // Realtime subscription — fires on any ticket change for this store
-  useEffect(() => {
-    if (!activated) return
-    const supabase = supabaseRealtime
-    let cancelled  = false
-    let channel:    ReturnType<typeof supabase.channel> | null = null
-
-    const subscribe = async () => {
-      await syncRealtimeAuth(supabase)
-      if (cancelled) return
-
-      const { data: { session } } = await supabase.auth.getSession()
-      const isAnonymous = session?.user?.is_anonymous ?? true
-      if (!session || isAnonymous) return
-
-      channel = supabase
-        .channel(`staff-missed-${storeId}`)
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'tickets', filter: `store_id=eq.${storeId}` },
-          () => void fetchMissed()
-        )
-        .subscribe()
-
-      if (cancelled) {
-        if (channel) void supabase.removeChannel(channel)
-      }
-    }
-
-    void subscribe()
-
-    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') setTimeout(() => void syncRealtimeAuth(supabase), 0)
-    })
-
-    return () => {
-      cancelled = true
-      authSub.unsubscribe()
-      if (channel) void supabase.removeChannel(channel)
-    }
-  }, [activated, storeId, fetchMissed])
 
   const act = async (key: string, fn: () => Promise<void>) => {
     setLoading(key)

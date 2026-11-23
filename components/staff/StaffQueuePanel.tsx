@@ -1,15 +1,17 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { supabaseRealtime } from '@/lib/supabase/clients'
-import { syncRealtimeAuth } from '@/lib/supabase/realtimeAuth'
+import { useRealtimeSubscription } from '@/lib/hooks/useRealtimeSubscription'
+import { RealtimeStatusBadge } from '@/components/RealtimeStatusBadge'
 import { createCoalescer } from '@/lib/utils/coalesce'
 import { callNext, markNoShow, markArrived, markServed } from '@/lib/actions/queue'
 import { NoShowCountdown } from '@/components/queue/NoShowCountdown'
 import { SkipForward, AlertTriangle, CheckCircle, CheckCircle2, Users } from 'lucide-react'
 import type { Store, Ticket } from '@/types'
+
+const ACTIVE_STATUSES = ['waiting', 'called', 'no_show', 'arrived']
 
 const STATUS_LABEL: Record<string, string> = {
   waiting: 'Waiting',
@@ -45,10 +47,7 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
     return () => subscription.unsubscribe()
   }, [router, params.mallSlug, params.storeId])
 
-  // ── Polling via server-side API route (guaranteed to work) ──────────────
-  // Uses /api/staff/queue which authenticates via server-side cookie session —
-  // the same path as the initial SSR load. This bypasses any browser-client
-  // auth issues that prevented the previous client-side polling from working.
+  // ── Data source: server-side API route (staff cookie session, same path as the SSR load) ──
   const apiFetch = useCallback(async () => {
     try {
       const res = await fetch(`/api/staff/queue?storeId=${storeId}`)
@@ -60,137 +59,56 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
       setTickets(ticketRows)
       if (storeRow) setStoreStats(storeRow)
     } catch {
-      // network blip — next poll will recover
+      // network blip — the next resync or fallback poll will recover
     }
   }, [storeId])
 
-  useEffect(() => {
-    void apiFetch()
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') void apiFetch()
-    }, 2000)
-    return () => clearInterval(id)
-  }, [apiFetch])
+  // Bursts of events (several joins at once) cause at most one refetch per second
+  const refetch = useMemo(() => createCoalescer(() => void apiFetch(), 1000), [apiFetch])
+  useEffect(() => () => refetch.cancel(), [refetch])
+  useEffect(() => { void apiFetch() }, [apiFetch])
 
-  // ── Realtime subscription (best-effort on top of polling) ────────────────
-  useEffect(() => {
-    const supabase = supabaseRealtime
-    let cancelled = false
-    let ticketsChannel: ReturnType<typeof supabase.channel> | null = null
-    let storeChannel: ReturnType<typeof supabase.channel> | null = null
-
-    const refetchStoreData = async () => {
-      const [{ data: ticketRows }, { data: storeRow }] = await Promise.all([
-        supabase
-          .from('tickets')
-          .select('*')
-          .eq('store_id', storeId)
-          .in('status', ['waiting', 'called', 'no_show'])
-          .order('queue_number'),
-        supabase
-          .from('stores')
-          .select('current_serving, last_queue_number')
-          .eq('id', storeId)
-          .single(),
-      ])
-      if (cancelled) return
-      if (ticketRows) setTickets(ticketRows as Ticket[])
-      if (storeRow)
-        setStoreStats({
-          current_serving: storeRow.current_serving,
-          last_queue_number: storeRow.last_queue_number,
-        })
-    }
-
-    // Bursts of ticket events (e.g. several joins at once) cause one refetch per second at most
-    const refetch = createCoalescer(() => void refetchStoreData(), 1000)
-
-    const subscribe = async () => {
-      await syncRealtimeAuth(supabase)
-      if (cancelled) return
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      const isAnonymous = session?.user?.is_anonymous ?? true
-      if (!session || isAnonymous) return
-
-      ticketsChannel = supabase
-        .channel(`staff-panel-${storeId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'tickets',
-            filter: `store_id=eq.${storeId}`,
-          },
-          (payload) => {
-            if (payload.eventType === 'INSERT') {
-              setTickets((prev) => {
-                const already = prev.some((t) => t.id === (payload.new as Ticket).id)
-                return already ? prev : [...prev, payload.new as Ticket]
-              })
-              refetch()
-            } else if (payload.eventType === 'UPDATE') {
-              setTickets((prev) =>
-                prev.map((t) =>
-                  t.id === (payload.new as Ticket).id ? (payload.new as Ticket) : t
-                )
-              )
-            } else if (payload.eventType === 'DELETE') {
-              setTickets((prev) => prev.filter((t) => t.id !== (payload.old as Ticket).id))
-            }
+  // ── Realtime: one channel (tickets of this store + this store row) ───────────
+  // Uses the cookie client, which holds the staff session. Reconnect with backoff, resync
+  // on visible/online, and polling only while disconnected are handled by the hook.
+  const realtimeStatus = useRealtimeSubscription({
+    name: `staff-queue-${storeId}`,
+    onSync: refetch,
+    bindings: [
+      {
+        event: '*',
+        table: 'tickets',
+        filter: `store_id=eq.${storeId}`,
+        handler: (payload) => {
+          if (payload.eventType === 'DELETE') {
+            setTickets((prev) => prev.filter((t) => t.id !== (payload.old as Ticket).id))
+            return
           }
-        )
-        .subscribe(async (status, err) => {
-          console.log('[REALTIME] tickets subscription status:', status)
-          if (err) console.error('[REALTIME] tickets subscription error:', err)
-          if (status === 'SUBSCRIBED') refetch()
-        })
-
-      storeChannel = supabase
-        .channel(`staff-store-${storeId}`)
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${storeId}` },
-          (payload) => {
-            const s = payload.new as Store
-            setStoreStats({
-              current_serving: s.current_serving,
-              last_queue_number: s.last_queue_number,
-            })
+          const row = payload.new as Ticket
+          if (!ACTIVE_STATUSES.includes(row.status)) {
+            // left the active queue (completed / missed / voided)
+            setTickets((prev) => prev.filter((t) => t.id !== row.id))
+          } else {
+            setTickets((prev) =>
+              prev.some((t) => t.id === row.id)
+                ? prev.map((t) => (t.id === row.id ? row : t))
+                : [...prev, row].sort((a, b) => a.queue_number - b.queue_number)
+            )
           }
-        )
-        .subscribe((status, err) => {
-          console.log('[REALTIME] store subscription status:', status)
-          if (err) console.error('[REALTIME] store subscription error:', err)
-        })
-
-      if (cancelled) {
-        if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
-        if (storeChannel) void supabase.removeChannel(storeChannel)
-      }
-    }
-
-    void subscribe()
-
-    const {
-      data: { subscription: authSub },
-    } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
-        setTimeout(() => void syncRealtimeAuth(supabase), 0)
-      }
-    })
-
-    return () => {
-      cancelled = true
-      refetch.cancel()
-      authSub.unsubscribe()
-      if (ticketsChannel) void supabase.removeChannel(ticketsChannel)
-      if (storeChannel) void supabase.removeChannel(storeChannel)
-    }
-  }, [storeId])
+          if (payload.eventType === 'INSERT') refetch()
+        },
+      },
+      {
+        event: 'UPDATE',
+        table: 'stores',
+        filter: `id=eq.${storeId}`,
+        handler: (payload) => {
+          const st = payload.new as Store
+          setStoreStats({ current_serving: st.current_serving, last_queue_number: st.last_queue_number })
+        },
+      },
+    ],
+  })
 
   const act = async (key: string, fn: () => Promise<unknown>) => {
     setLoading(key)
@@ -205,13 +123,15 @@ export function StaffQueuePanel({ storeId, initialTickets, initialStore }: Staff
     }
   }
 
-  const activeTickets = tickets.filter((t) =>
-    ['waiting', 'called', 'no_show', 'arrived'].includes(t.status)
-  )
+  const activeTickets = tickets.filter((t) => ACTIVE_STATUSES.includes(t.status))
   const waitingCount = tickets.filter((t) => t.status === 'waiting').length
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <RealtimeStatusBadge status={realtimeStatus} />
+      </div>
+
       {/* Live stats bar */}
       <div
         className="grid grid-cols-3 divide-x divide-white/[0.06] rounded-2xl"

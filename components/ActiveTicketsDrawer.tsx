@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { withRetry } from '@/lib/supabase/resilient'
 import { useActiveTickets } from '@/context/ActiveTicketsContext'
 import { QueueTicket } from '@/components/queue/QueueTicket'
 import { Ticket, ChevronDown, ChevronUp } from 'lucide-react'
@@ -20,7 +21,7 @@ export function ActiveTicketsDrawer() {
     const supabase = createClient()
     let cancelled = false
     const load = async () => {
-      const { data } = await supabase.rpc('my_queue_positions')
+      const { data } = await withRetry((signal) => supabase.rpc('my_queue_positions').abortSignal(signal))
       if (cancelled || !data) return
       setAheadByTicket(
         Object.fromEntries(
